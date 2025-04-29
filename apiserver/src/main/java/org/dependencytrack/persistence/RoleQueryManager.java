@@ -97,7 +97,7 @@ final class RoleQueryManager extends QueryManager implements IQueryManager {
     public Role getRoleByName(final String name) {
         final String role = StringUtils.lowerCase(StringUtils.trimToNull(name));
         final Query<Role> query = pm.newQuery(Role.class)
-                .filter("name == :name")
+                .filter("name.toLowerCase().trim() == :name")
                 .setNamedParameters(Map.of("name", role))
                 .range(0, 1);
 
