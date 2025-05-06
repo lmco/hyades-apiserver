@@ -574,7 +574,7 @@ public class QueryManager extends AlpineQueryManager {
             default -> {
                 return Collections.emptySet();
             }
-        };
+        }
 
         Query<? extends ProjectRole> query = pm.newQuery(cls)
                 .filter("project.id == :projectId && %s.contains(:principal)".formatted(usersField))
