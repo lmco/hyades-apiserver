@@ -1560,6 +1560,35 @@ public class BomResourceTest extends ResourceTest {
     }
 
     @Test
+    public void uploadBomGitLabTest() {
+        initializeWithPermissions(Permissions.BOM_UPLOAD, Permissions.PROJECT_CREATION_UPLOAD);
+        String gitLabToken = "123456789";
+        final var project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
+        final var bomProto = Bom.newBuilder().setSpecVersion("1.6").build();
+
+        final var multiPart = new FormDataMultiPart()
+                .field("gitlab_token", gitLabToken)
+                .field("project", project.getUuid().toString())
+                .field("bom", bomProto.toByteArray(), new MediaType("application", "x.vnd.cyclonedx+protobuf"))
+                .field("autoCreate", "true");
+
+        Response response = jersey.target(V1_BOM + "/gitlab").request()
+                .header(X_API_KEY, apiKey)
+                .post(Entity.entity(multiPart, multiPart.getMediaType()));
+
+        assertThat(response.getStatus()).isEqualTo(200);
+        assertThatJson(getPlainTextBody(response)).isEqualTo("""
+                {
+                  "token": "${json-unit.any-string}"
+                }
+                """);
+
+        final var projectResponse = qm.getProject("Acme Example", "1.0");
+        assertThat(projectResponse).isNotNull();
+        assertThat(projectResponse.getName()).isEqualTo(project.getName());
+    }
+
+    @Test
     public void validateCycloneDxBomWithMultipleNamespacesTest() throws Exception {
         byte[] bom = resourceToByteArray("/unit/bom-issue4008.xml");
         assertThatNoException().isThrownBy(() -> CycloneDxValidator.getInstance().validate(bom));
