@@ -37,6 +37,7 @@ import org.dependencytrack.auth.Permissions;
 import org.dependencytrack.model.Role;
 import org.dependencytrack.model.validation.ValidUuid;
 import org.dependencytrack.persistence.QueryManager;
+import org.dependencytrack.resources.v1.vo.RolePermissionsSetRequest;
 import org.dependencytrack.resources.v1.vo.TeamPermissionsSetRequest;
 import org.dependencytrack.resources.v1.vo.UserPermissionsSetRequest;
 import org.owasp.security.logging.SecurityMarkers;
@@ -453,6 +454,58 @@ public class PermissionResource extends AlpineResource {
                     "Set permissions for team: %s / permissions: %s"
                             .formatted(team.getName(), permissionNames));
             return Response.ok(team).build();
+        }
+    }
+
+    @PUT
+    @Path("/role")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.APPLICATION_JSON)
+    @Operation(
+        summary = "Replaces a role's permissions with the specified list",
+        description = "<p>Requires permission <strong>ACCESS_MANAGEMENT</strong> or <strong>ACCESS_MANAGEMENT_UPDATE</strong></p>"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(responseCode = "200", description = "The updated role", content = @Content(schema = @Schema(implementation = Role.class))),
+            @ApiResponse(responseCode = "304", description = "The role already has the specified permission(s)"),
+            @ApiResponse(responseCode = "400", description = "Bad request"),
+            @ApiResponse(responseCode = "401", description = "Unauthorized"),
+            @ApiResponse(responseCode = "404", description = "The role could not be found")
+    })
+    @PermissionRequired({ Permissions.Constants.ACCESS_MANAGEMENT, Permissions.Constants.ACCESS_MANAGEMENT_UPDATE })
+    public Response setRolePermissions(@Parameter(description = "Role UUID and requested permissions") @Valid RolePermissionsSetRequest request) {
+        try (QueryManager qm = new QueryManager()) {
+            Role role = qm.getObjectByUuid(Role.class, request.role(), Role.FetchGroup.ALL.name());
+            if (role == null)
+                return Response.status(Response.Status.NOT_FOUND).entity("The role could not be found.").build();
+
+            List<String> permissionNames = request.permissions()
+                    .stream()
+                    .map(Permissions::name)
+                    .toList();
+
+            final Query<Permission> query = qm.getPersistenceManager().newQuery(Permission.class)
+                    .filter(":permissions.contains(name)")
+                    .setNamedParameters(Map.of("permissions", permissionNames))
+                    .orderBy("name asc");
+
+            final Set<Permission> requestedPermissions;
+            try {
+                requestedPermissions = Set.copyOf(query.executeList());
+            } finally {
+                query.closeAll();
+            }
+
+            if (role.getPermissions().equals(requestedPermissions))
+                return Response.notModified().entity("Role already has selected permission(s).").build();
+
+            role.setPermissions(requestedPermissions);
+            role = qm.persist(role);
+
+            super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT,
+                    "Set permissions for role: %s / permissions: %s"
+                            .formatted(role.getName(), permissionNames));
+            return Response.ok(role).build();
         }
     }
 
