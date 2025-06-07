@@ -76,6 +76,7 @@ import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import javax.jdo.Query;
@@ -253,6 +254,79 @@ public class UserResource extends AlpineResource {
                 super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_FAILURE, "Unauthorized login attempt / invalid credentials / username: " + username);
                 return Response.status(Response.Status.UNAUTHORIZED).entity(e.getCauseType().name()).build();
             }
+        }
+    }
+
+    @GET
+    @Produces(MediaType.APPLICATION_JSON)
+    @Operation(
+            summary = "Returns a list of users or a single user, optionally filtered by type and/or username.",
+            description = "<p>Requires permission <strong>ACCESS_MANAGEMENT</strong> or <strong>ACCESS_MANAGEMENT_READ</strong></p>"
+    )
+    @ApiResponses(value = {
+            @ApiResponse(
+                    responseCode = "200",
+                    description = "A list of users or a single user (may be filtered by type and/or username)",
+                    headers = @Header(name = TOTAL_COUNT_HEADER, description = "The total number of managed users", schema = @Schema(format = "integer")),
+                    content = @Content(array = @ArraySchema(schema = @Schema(implementation = User.class)))
+            ),
+            @ApiResponse(responseCode = "401", description = "Unauthorized")
+    })
+    @PermissionRequired({Permissions.Constants.ACCESS_MANAGEMENT, Permissions.Constants.ACCESS_MANAGEMENT_READ})
+    public Response getUsers(
+        @QueryParam("type") String type,
+        @QueryParam("username") String username) {
+        try (QueryManager qm = new QueryManager(getAlpineRequest())) {
+            Class<? extends User> userClass = switch (type == null ? "" : type.toLowerCase()) {
+                case "ldap" -> LdapUser.class;
+                case "managed" -> ManagedUser.class;
+                case "oidc" -> OidcUser.class;
+                case "" -> User.class;
+                default -> null;
+            };
+
+            if (userClass == null)
+                return Response.status(Response.Status.BAD_REQUEST)
+                        .entity("Invalid or missing user type. Allowed values: managed, ldap, oidc.").build();
+
+
+            Query<? extends User> query = qm.getPersistenceManager().newQuery(userClass);
+            List<? extends User> users;
+
+            if (username != null) {
+                query.setFilter("username == :username");
+                query.setNamedParameters(Map.of("username", username));
+            }
+
+            try {
+                users = List.copyOf(query.executeList());
+            } finally {
+                query.closeAll();
+            }
+
+            // failure
+            if(users == null || users.isEmpty()) {
+                StringBuilder errStr = new StringBuilder();
+
+                if (type == null && username == null){
+                    errStr.append("No users found.");
+                    return Response.status(Response.Status.NOT_FOUND).entity(errStr.toString()).build();
+                }
+
+                // errStr.append(username != null ? "User: " + username : "Users");
+                errStr.append(username != null ? "User '%s'".formatted(username) : "Users");
+                errStr.append(type != null ? " of type '%s'".formatted(type) : " of all types");
+                errStr.append(" could not be found.");
+
+                return Response.status(Response.Status.NOT_FOUND).entity(errStr.toString()).build();
+            }
+
+            // success
+            if (username != null && users.size() == 1)
+                    return Response.ok(users.get(0)).build();
+
+            return Response.ok(users).header(TOTAL_COUNT_HEADER, users.size()).build();
+
         }
     }
 
