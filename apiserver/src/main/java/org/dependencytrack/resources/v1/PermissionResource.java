@@ -53,9 +53,7 @@ import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import javax.jdo.Query;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /**
@@ -167,6 +165,7 @@ public class PermissionResource extends AlpineResource {
             @PathParam("permission") String permissionName) {
         try (QueryManager qm = new QueryManager()) {
             User principal = qm.getUser(username);
+            principal = qm.getObjectById(principal.getClass(), principal.getId());
             if (principal == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The user could not be found.").build();
             }
@@ -367,41 +366,32 @@ public class PermissionResource extends AlpineResource {
     })
     @PermissionRequired({ Permissions.Constants.ACCESS_MANAGEMENT, Permissions.Constants.ACCESS_MANAGEMENT_UPDATE })
     public Response setUserPermissions(
-            @Parameter(description = "A username and valid list permission") @Valid UserPermissionsSetRequest request) {
+            @Parameter(description = "A username and valid list permission") @Valid final UserPermissionsSetRequest request) {
         try (QueryManager qm = new QueryManager()) {
-            User user = qm.getUser(request.username());
-            if (user == null)
+            User principal = qm.getUser(request.username());
+            principal = qm.getObjectById(principal.getClass(), principal.getId());
+            if (principal == null)
                 return Response.status(Response.Status.NOT_FOUND).entity("The user could not be found.").build();
 
-            List<String> permissionNames = request.permissions()
+            final List<String> permissionNames = request.permissions()
                     .stream()
                     .map(Permissions::name)
                     .toList();
 
-            final Query<Permission> query = qm.getPersistenceManager().newQuery(Permission.class)
-                    .filter(":permissions.contains(name)")
-                    .setNamedParameters(Map.of("permissions", permissionNames))
-                    .orderBy("name asc");
+            final List<Permission> requestedPermissions = qm.getPermissionsByName(permissionNames);
 
-            final List<Permission> requestedPermissions;
-            try {
-                requestedPermissions = List.copyOf(query.executeList());
-            } finally {
-                query.closeAll();
-            }
-
-            if (user.getPermissions().equals(requestedPermissions))
+            if (principal.getPermissions().equals(requestedPermissions))
                 return Response.notModified()
                         .entity("User already has selected permission(s).")
                         .build();
 
-            user.setPermissions(requestedPermissions);
-            user = qm.persist(user);
+            principal.setPermissions(requestedPermissions);
+            principal = qm.persist(principal);
             super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT,
                     "Set permissions for user: %s / permissions: %s"
-                            .formatted(user.getUsername(), permissionNames));
+                            .formatted(principal.getUsername(), permissionNames));
 
-            return Response.ok(user).build();
+            return Response.ok(principal).build();
         }
     }
 
@@ -421,28 +411,18 @@ public class PermissionResource extends AlpineResource {
             @ApiResponse(responseCode = "404", description = "The team could not be found")
     })
     @PermissionRequired({ Permissions.Constants.ACCESS_MANAGEMENT, Permissions.Constants.ACCESS_MANAGEMENT_UPDATE })
-    public Response setTeamPermissions(@Parameter(description = "Team UUID and requested permissions") @Valid TeamPermissionsSetRequest request) {
+    public Response setTeamPermissions(@Parameter(description = "Team UUID and requested permissions") @Valid final TeamPermissionsSetRequest request) {
         try (QueryManager qm = new QueryManager()) {
             Team team = qm.getObjectByUuid(Team.class, request.team(), Team.FetchGroup.ALL.name());
             if (team == null)
                 return Response.status(Response.Status.NOT_FOUND).entity("The team could not be found.").build();
 
-            List<String> permissionNames = request.permissions()
+            final List<String> permissionNames = request.permissions()
                     .stream()
                     .map(Permissions::name)
                     .toList();
 
-            final Query<Permission> query = qm.getPersistenceManager().newQuery(Permission.class)
-                    .filter(":permissions.contains(name)")
-                    .setNamedParameters(Map.of("permissions", permissionNames))
-                    .orderBy("name asc");
-
-            final List<Permission> requestedPermissions;
-            try {
-                requestedPermissions = List.copyOf(query.executeList());
-            } finally {
-                query.closeAll();
-            }
+            final List<Permission> requestedPermissions = qm.getPermissionsByName(permissionNames);
 
             if (team.getPermissions().equals(requestedPermissions))
                 return Response.notModified().entity("Team already has selected permission(s).").build();
@@ -473,28 +453,18 @@ public class PermissionResource extends AlpineResource {
             @ApiResponse(responseCode = "404", description = "The role could not be found")
     })
     @PermissionRequired({ Permissions.Constants.ACCESS_MANAGEMENT, Permissions.Constants.ACCESS_MANAGEMENT_UPDATE })
-    public Response setRolePermissions(@Parameter(description = "Role UUID and requested permissions") @Valid RolePermissionsSetRequest request) {
+    public Response setRolePermissions(@Parameter(description = "Role UUID and requested permissions") @Valid final RolePermissionsSetRequest request) {
         try (QueryManager qm = new QueryManager()) {
             Role role = qm.getObjectByUuid(Role.class, request.role(), Role.FetchGroup.ALL.name());
             if (role == null)
                 return Response.status(Response.Status.NOT_FOUND).entity("The role could not be found.").build();
 
-            List<String> permissionNames = request.permissions()
+            final List<String> permissionNames = request.permissions()
                     .stream()
                     .map(Permissions::name)
                     .toList();
 
-            final Query<Permission> query = qm.getPersistenceManager().newQuery(Permission.class)
-                    .filter(":permissions.contains(name)")
-                    .setNamedParameters(Map.of("permissions", permissionNames))
-                    .orderBy("name asc");
-
-            final Set<Permission> requestedPermissions;
-            try {
-                requestedPermissions = Set.copyOf(query.executeList());
-            } finally {
-                query.closeAll();
-            }
+            final Set<Permission> requestedPermissions = Set.copyOf(qm.getPermissionsByName(permissionNames));
 
             if (role.getPermissions().equals(requestedPermissions))
                 return Response.notModified().entity("Role already has selected permission(s).").build();

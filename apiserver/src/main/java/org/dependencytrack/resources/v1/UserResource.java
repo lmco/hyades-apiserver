@@ -262,13 +262,23 @@ public class UserResource extends AlpineResource {
     @Operation(
             summary = "Returns a list of users or a single user, optionally filtered by type and/or username.",
             description = "<p>Requires permission <strong>ACCESS_MANAGEMENT</strong> or <strong>ACCESS_MANAGEMENT_READ</strong></p>"
+            + "<p><strong>Note:</strong> To retrieve additional subclass-specific information (such as ManagedUser fields like <code>suspended</code>, <code>forcePasswordChange</code>, etc.), "
+            + "you must specify the <code>type</code> query parameter (e.g., <code>type=managed</code>, <code>type=ldap</code>, or <code>type=oidc</code>). "
+            + "If <code>type</code> is omitted, only base User fields will be included in the response.</p>"
     )
     @ApiResponses(value = {
             @ApiResponse(
                     responseCode = "200",
                     description = "A list of users or a single user (may be filtered by type and/or username)",
                     headers = @Header(name = TOTAL_COUNT_HEADER, description = "The total number of managed users", schema = @Schema(format = "integer")),
-                    content = @Content(array = @ArraySchema(schema = @Schema(implementation = User.class)))
+                    content = @Content(
+                        schema = @Schema(
+                            oneOf = {User.class, ManagedUser.class, LdapUser.class, OidcUser.class}
+                        ),
+                        array = @ArraySchema(
+                            schema = @Schema(oneOf = {User.class, ManagedUser.class, LdapUser.class, OidcUser.class})
+                        )
+                    )
             ),
             @ApiResponse(responseCode = "401", description = "Unauthorized")
     })
@@ -277,21 +287,31 @@ public class UserResource extends AlpineResource {
         @QueryParam("type") String type,
         @QueryParam("username") String username) {
         try (QueryManager qm = new QueryManager(getAlpineRequest())) {
-            Class<? extends User> userClass = switch (type == null ? "" : type.toLowerCase()) {
-                case "ldap" -> LdapUser.class;
-                case "managed" -> ManagedUser.class;
-                case "oidc" -> OidcUser.class;
-                case "" -> User.class;
-                default -> null;
-            };
+            final List<User> users;
+
+            if(StringUtils.isBlank(type) && StringUtils.isBlank(username)) {
+                users = new ArrayList<>();
+                users.addAll(qm.getManagedUsers());
+                users.addAll(qm.getLdapUsers());
+                users.addAll(qm.getOidcUsers());
+                return Response.ok(users).header(TOTAL_COUNT_HEADER, users.size()).build();
+            }
+
+            Class<? extends User> userClass =
+                    switch (Objects.requireNonNullElse(type, "").toLowerCase()) {
+                        // switch (type == null ? "" : type.toLowerCase()) {
+                        case "ldap" -> LdapUser.class;
+                        case "managed" -> ManagedUser.class;
+                        case "oidc" -> OidcUser.class;
+                        case "" -> User.class;
+                        default -> null;
+                    };
 
             if (userClass == null)
                 return Response.status(Response.Status.BAD_REQUEST)
                         .entity("Invalid or missing user type. Allowed values: managed, ldap, oidc.").build();
 
-
             Query<? extends User> query = qm.getPersistenceManager().newQuery(userClass);
-            List<? extends User> users;
 
             if (username != null) {
                 query.setFilter("username == :username");
@@ -305,7 +325,7 @@ public class UserResource extends AlpineResource {
             }
 
             // failure
-            if(users == null || users.isEmpty()) {
+            if(users == null) {
                 StringBuilder errStr = new StringBuilder();
 
                 if (type == null && username == null){
@@ -313,7 +333,6 @@ public class UserResource extends AlpineResource {
                     return Response.status(Response.Status.NOT_FOUND).entity(errStr.toString()).build();
                 }
 
-                // errStr.append(username != null ? "User: " + username : "Users");
                 errStr.append(username != null ? "User '%s'".formatted(username) : "Users");
                 errStr.append(type != null ? " of type '%s'".formatted(type) : " of all types");
                 errStr.append(" could not be found.");
@@ -858,6 +877,7 @@ public class UserResource extends AlpineResource {
             @Parameter(description = "Username and list of UUIDs to assign to user", required = true) @Valid TeamsSetRequest request) {
         try (QueryManager qm = new QueryManager()) {
             User principal = qm.getUser(request.username());
+            principal = qm.getObjectById(principal.getClass(), principal.getId());
             if (principal == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The user could not be found.").build();
             }
