@@ -119,21 +119,21 @@ public class PermissionResource extends AlpineResource {
             @Parameter(description = "A valid permission", required = true)
             @PathParam("permission") String permissionName) {
         try (QueryManager qm = new QueryManager()) {
-            User principal = qm.getUser(username);
-            if (principal == null) {
+            User user = qm.getUser(username);
+            if (user == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The user could not be found.").build();
             }
             final Permission permission = qm.getPermission(permissionName);
             if (permission == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The permission could not be found.").build();
             }
-            final List<Permission> permissions = principal.getPermissions();
+            final List<Permission> permissions = user.getPermissions();
             if (permissions != null && !permissions.contains(permission)) {
                 permissions.add(permission);
-                principal.setPermissions(permissions);
-                principal = qm.persist(principal);
-                super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Added permission for user: " + principal.getName() + " / permission: " + permission.getName());
-                return Response.ok(principal).build();
+                user.setPermissions(permissions);
+                user = qm.persist(user);
+                super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Added permission for user: " + user.getName() + " / permission: " + permission.getName());
+                return Response.ok(user).build();
             }
             return Response.status(Response.Status.NOT_MODIFIED).build();
         }
@@ -164,22 +164,22 @@ public class PermissionResource extends AlpineResource {
             @Parameter(description = "A valid permission", required = true)
             @PathParam("permission") String permissionName) {
         try (QueryManager qm = new QueryManager()) {
-            User principal = qm.getUser(username);
-            principal = qm.getObjectById(principal.getClass(), principal.getId());
-            if (principal == null) {
+            User user = qm.getUser(username);
+            user = qm.getObjectById(user.getClass(), user.getId());
+            if (user == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The user could not be found.").build();
             }
             final Permission permission = qm.getPermission(permissionName);
             if (permission == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The permission could not be found.").build();
             }
-            final List<Permission> permissions = principal.getPermissions();
+            final List<Permission> permissions = user.getPermissions();
             if (permissions != null && permissions.contains(permission)) {
                 permissions.remove(permission);
-                principal.setPermissions(permissions);
-                principal = qm.persist(principal);
-                super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Removed permission for user: " + principal.getName() + " / permission: " + permission.getName());
-                return Response.ok(principal).build();
+                user.setPermissions(permissions);
+                user = qm.persist(user);
+                super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Removed permission for user: " + user.getName() + " / permission: " + permission.getName());
+                return Response.ok(user).build();
             }
             return Response.status(Response.Status.NOT_MODIFIED).build();
         }
@@ -368,9 +368,9 @@ public class PermissionResource extends AlpineResource {
     public Response setUserPermissions(
             @Parameter(description = "A username and valid list permission") @Valid final UserPermissionsSetRequest request) {
         try (QueryManager qm = new QueryManager()) {
-            User principal = qm.getUser(request.username());
-            principal = qm.getObjectById(principal.getClass(), principal.getId());
-            if (principal == null)
+            User user = qm.getUser(request.username());
+            user = qm.getObjectById(user.getClass(), user.getId());
+            if (user == null)
                 return Response.status(Response.Status.NOT_FOUND).entity("The user could not be found.").build();
 
             final List<String> permissionNames = request.permissions()
@@ -380,18 +380,18 @@ public class PermissionResource extends AlpineResource {
 
             final List<Permission> requestedPermissions = qm.getPermissionsByName(permissionNames);
 
-            if (principal.getPermissions().equals(requestedPermissions))
+            if (user.getPermissions().equals(requestedPermissions))
                 return Response.notModified()
                         .entity("User already has selected permission(s).")
                         .build();
 
-            principal.setPermissions(requestedPermissions);
-            principal = qm.persist(principal);
+            user.setPermissions(requestedPermissions);
+            user = qm.persist(user);
             super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT,
                     "Set permissions for user: %s / permissions: %s"
-                            .formatted(principal.getUsername(), permissionNames));
+                            .formatted(user.getUsername(), permissionNames));
 
-            return Response.ok(principal).build();
+            return Response.ok(user).build();
         }
     }
 

@@ -299,7 +299,6 @@ public class UserResource extends AlpineResource {
 
             Class<? extends User> userClass =
                     switch (Objects.requireNonNullElse(type, "").toLowerCase()) {
-                        // switch (type == null ? "" : type.toLowerCase()) {
                         case "ldap" -> LdapUser.class;
                         case "managed" -> ManagedUser.class;
                         case "oidc" -> OidcUser.class;
@@ -799,15 +798,15 @@ public class UserResource extends AlpineResource {
             if (team == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The team could not be found.").build();
             }
-            User principal = qm.getUser(username);
-            if (principal == null) {
+            User user = qm.getUser(username);
+            if (user == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The user could not be found.").build();
             }
-            final boolean modified = qm.addUserToTeam(principal, team);
-            principal = qm.getObjectById(principal.getClass(), principal.getId());
+            final boolean modified = qm.addUserToTeam(user, team);
+            user = qm.getObjectById(user.getClass(), user.getId());
             if (modified) {
-                super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Added team membership for: " + principal.getName() + " / team: " + team.getName());
-                return Response.ok(principal).build();
+                super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Added team membership for: " + user.getName() + " / team: " + team.getName());
+                return Response.ok(user).build();
             } else {
                 return Response.status(Response.Status.NOT_MODIFIED).entity("The user is already a member of the specified team.").build();
             }
@@ -843,15 +842,15 @@ public class UserResource extends AlpineResource {
             if (team == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The team could not be found.").build();
             }
-            User principal = qm.getUser(username);
-            if (principal == null) {
+            User user = qm.getUser(username);
+            if (user == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The user could not be found.").build();
             }
-            final boolean modified = qm.removeUserFromTeam(principal, team);
-            principal = qm.getObjectById(principal.getClass(), principal.getId());
+            final boolean modified = qm.removeUserFromTeam(user, team);
+            user = qm.getObjectById(user.getClass(), user.getId());
             if (modified) {
-                super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Removed team membership for: " + principal.getName() + " / team: " + team.getName());
-                return Response.ok(principal).build();
+                super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Removed team membership for: " + user.getName() + " / team: " + team.getName());
+                return Response.ok(user).build();
             } else {
                 return Response.status(Response.Status.NOT_MODIFIED)
                         .entity("The user was not a member of the specified team.")
@@ -876,9 +875,9 @@ public class UserResource extends AlpineResource {
     public Response setUserTeams(
             @Parameter(description = "Username and list of UUIDs to assign to user", required = true) @Valid TeamsSetRequest request) {
         try (QueryManager qm = new QueryManager()) {
-            User principal = qm.getUser(request.username());
-            principal = qm.getObjectById(principal.getClass(), principal.getId());
-            if (principal == null) {
+            User user = qm.getUser(request.username());
+            user = qm.getObjectById(user.getClass(), user.getId());
+            if (user == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The user could not be found.").build();
             }
 
@@ -907,16 +906,16 @@ public class UserResource extends AlpineResource {
                 return problem.toResponse();
             }
 
-            final List<Team> currentUserTeams = Objects.requireNonNullElse(principal.getTeams(), List.<Team>of());
+            final List<Team> currentUserTeams = Objects.requireNonNullElse(user.getTeams(), List.<Team>of());
             if (currentUserTeams.equals(requestedTeams)) {
                 return Response.notModified().entity("The user is already a member of the selected team(s)").build();
             }
 
-            principal.setTeams(requestedTeams);
-            qm.persist(principal);
+            user.setTeams(requestedTeams);
+            qm.persist(user);
             super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT,
-                    "Added team membership for: " + principal.getName() + " / team: " + requestedTeams.toString());
-            return Response.ok(principal).build();
+                    "Added team membership for: " + user.getName() + " / team: " + requestedTeams.toString());
+            return Response.ok(user).build();
         }
     }
 
