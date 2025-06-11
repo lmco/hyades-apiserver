@@ -22,6 +22,7 @@ import alpine.common.logging.Logger;
 import alpine.model.Permission;
 import alpine.model.Team;
 import alpine.model.User;
+import alpine.model.UserType;
 import alpine.server.auth.PermissionRequired;
 import alpine.server.resources.AlpineResource;
 import io.swagger.v3.oas.annotations.Operation;
@@ -51,6 +52,7 @@ import jakarta.ws.rs.PUT;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import java.util.List;
@@ -162,17 +164,20 @@ public class PermissionResource extends AlpineResource {
             @Parameter(description = "A valid username", required = true)
             @PathParam("username") String username,
             @Parameter(description = "A valid permission", required = true)
+            @QueryParam("userType") UserType userType,
             @PathParam("permission") String permissionName) {
         try (QueryManager qm = new QueryManager()) {
-            User user = qm.getUser(username);
-            user = qm.getObjectById(user.getClass(), user.getId());
+            Class <? extends User> userClass = (userType != null ? userType.getUserClass() : User.class);
+            User user = qm.getUser(username, userClass);
             if (user == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The user could not be found.").build();
             }
+
             final Permission permission = qm.getPermission(permissionName);
             if (permission == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The permission could not be found.").build();
             }
+
             final List<Permission> permissions = user.getPermissions();
             if (permissions != null && permissions.contains(permission)) {
                 permissions.remove(permission);
@@ -181,6 +186,7 @@ public class PermissionResource extends AlpineResource {
                 super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Removed permission for user: " + user.getName() + " / permission: " + permission.getName());
                 return Response.ok(user).build();
             }
+
             return Response.status(Response.Status.NOT_MODIFIED).build();
         }
     }
@@ -213,10 +219,12 @@ public class PermissionResource extends AlpineResource {
             if (team == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The team could not be found.").build();
             }
+
             final Permission permission = qm.getPermission(permissionName);
             if (permission == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The permission could not be found.").build();
             }
+
             final List<Permission> permissions = team.getPermissions();
             if (permissions != null && !permissions.contains(permission)) {
                 permissions.add(permission);
@@ -225,6 +233,7 @@ public class PermissionResource extends AlpineResource {
                 super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Added permission for team: " + team.getName() + " / permission: " + permission.getName());
                 return Response.ok(team).build();
             }
+
             return Response.status(Response.Status.NOT_MODIFIED).build();
         }
     }
@@ -368,8 +377,12 @@ public class PermissionResource extends AlpineResource {
     public Response setUserPermissions(
             @Parameter(description = "A username and valid list permission") @Valid final UserPermissionsSetRequest request) {
         try (QueryManager qm = new QueryManager()) {
-            User user = qm.getUser(request.username());
-            user = qm.getObjectById(user.getClass(), user.getId());
+            /* User user = qm.getUser(request.username());
+            user = qm.getObjectById(user.getClass(), user.getId()); */
+
+            final Class<? extends User> userClass = request.userType() != null ? request.userType().getUserClass() : User.class;
+            User user = qm.getUser(request.username(), userClass);
+
             if (user == null)
                 return Response.status(Response.Status.NOT_FOUND).entity("The user could not be found.").build();
 

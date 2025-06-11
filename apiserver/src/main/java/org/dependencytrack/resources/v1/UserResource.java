@@ -26,6 +26,7 @@ import alpine.model.OidcUser;
 import alpine.model.Permission;
 import alpine.model.Team;
 import alpine.model.User;
+import alpine.model.UserType;
 import alpine.notification.Notification;
 import alpine.notification.NotificationLevel;
 import alpine.security.crypto.KeyManager;
@@ -284,33 +285,16 @@ public class UserResource extends AlpineResource {
     })
     @PermissionRequired({Permissions.Constants.ACCESS_MANAGEMENT, Permissions.Constants.ACCESS_MANAGEMENT_READ})
     public Response getUsers(
-        @QueryParam("type") String type,
+        @QueryParam("type") UserType type,
         @QueryParam("username") String username) {
         try (QueryManager qm = new QueryManager(getAlpineRequest())) {
             final List<User> users;
-
-            if(StringUtils.isBlank(type) && StringUtils.isBlank(username)) {
-                users = new ArrayList<>();
-                users.addAll(qm.getManagedUsers());
-                users.addAll(qm.getLdapUsers());
-                users.addAll(qm.getOidcUsers());
+            if (type == null) {
+                users = qm.getAllUsers();
                 return Response.ok(users).header(TOTAL_COUNT_HEADER, users.size()).build();
             }
 
-            Class<? extends User> userClass =
-                    switch (Objects.requireNonNullElse(type, "").toLowerCase()) {
-                        case "ldap" -> LdapUser.class;
-                        case "managed" -> ManagedUser.class;
-                        case "oidc" -> OidcUser.class;
-                        case "" -> User.class;
-                        default -> null;
-                    };
-
-            if (userClass == null)
-                return Response.status(Response.Status.BAD_REQUEST)
-                        .entity("Invalid or missing user type. Allowed values: managed, ldap, oidc.").build();
-
-            Query<? extends User> query = qm.getPersistenceManager().newQuery(userClass);
+            Query<? extends User> query = qm.getPersistenceManager().newQuery(type.getUserClass());
 
             if (username != null) {
                 query.setFilter("username == :username");
@@ -326,11 +310,6 @@ public class UserResource extends AlpineResource {
             // failure
             if(users == null) {
                 StringBuilder errStr = new StringBuilder();
-
-                if (type == null && username == null){
-                    errStr.append("No users found.");
-                    return Response.status(Response.Status.NOT_FOUND).entity(errStr.toString()).build();
-                }
 
                 errStr.append(username != null ? "User '%s'".formatted(username) : "Users");
                 errStr.append(type != null ? " of type '%s'".formatted(type) : " of all types");
@@ -875,8 +854,12 @@ public class UserResource extends AlpineResource {
     public Response setUserTeams(
             @Parameter(description = "Username and list of UUIDs to assign to user", required = true) @Valid TeamsSetRequest request) {
         try (QueryManager qm = new QueryManager()) {
-            User user = qm.getUser(request.username());
-            user = qm.getObjectById(user.getClass(), user.getId());
+            /* User user = qm.getUser(request.username());
+            user = qm.getObjectById(user.getClass(), user.getId()); */
+
+            final Class<? extends User> userClass = request.userType() != null ? request.userType().getUserClass() : User.class;
+            User user = qm.getUser(request.username(), userClass);
+
             if (user == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The user could not be found.").build();
             }
@@ -912,7 +895,7 @@ public class UserResource extends AlpineResource {
             }
 
             user.setTeams(requestedTeams);
-            qm.persist(user);
+            user = qm.persist(user);
             super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT,
                     "Added team membership for: " + user.getName() + " / team: " + requestedTeams.toString());
             return Response.ok(user).build();
