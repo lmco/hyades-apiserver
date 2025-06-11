@@ -377,9 +377,6 @@ public class PermissionResource extends AlpineResource {
     public Response setUserPermissions(
             @Parameter(description = "A username and valid list permission") @Valid final UserPermissionsSetRequest request) {
         try (QueryManager qm = new QueryManager()) {
-            /* User user = qm.getUser(request.username());
-            user = qm.getObjectById(user.getClass(), user.getId()); */
-
             final Class<? extends User> userClass = request.userType() != null ? request.userType().getUserClass() : User.class;
             User user = qm.getUser(request.username(), userClass);
 

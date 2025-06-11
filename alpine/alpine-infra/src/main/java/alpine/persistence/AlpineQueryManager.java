@@ -345,7 +345,7 @@ public class AlpineQueryManager extends AbstractAlpineQueryManager {
     }
 
     /**
-     * Returns a complete list of all objects extending User.class, in ascending order by username.
+     * Returns a complete list of all subclasses extending User.class, in ascending order by username.
      * @return a list of all Users
      * @since 1.0.0
      */
