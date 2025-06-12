@@ -312,7 +312,7 @@ public class UserResource extends AlpineResource {
                 StringBuilder errStr = new StringBuilder();
 
                 errStr.append(username != null ? "User '%s'".formatted(username) : "Users");
-                errStr.append(type != null ? " of type '%s'".formatted(type) : " of all types");
+                errStr.append(type != null ? " of type '%s'".formatted(type) : " of any type");
                 errStr.append(" could not be found.");
 
                 return Response.status(Response.Status.NOT_FOUND).entity(errStr.toString()).build();
