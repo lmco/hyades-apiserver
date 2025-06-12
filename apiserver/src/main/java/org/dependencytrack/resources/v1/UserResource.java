@@ -296,10 +296,8 @@ public class UserResource extends AlpineResource {
 
             Query<? extends User> query = qm.getPersistenceManager().newQuery(type.getUserClass());
 
-            if (username != null) {
-                query.setFilter("username == :username");
-                query.setNamedParameters(Map.of("username", username));
-            }
+            if (username != null)
+                query.filter("username == :username").setParameters(username);
 
             try {
                 users = List.copyOf(query.executeList());
@@ -307,7 +305,6 @@ public class UserResource extends AlpineResource {
                 query.closeAll();
             }
 
-            // failure
             if(users == null) {
                 StringBuilder errStr = new StringBuilder();
 
@@ -318,7 +315,6 @@ public class UserResource extends AlpineResource {
                 return Response.status(Response.Status.NOT_FOUND).entity(errStr.toString()).build();
             }
 
-            // success
             if (username != null && users.size() == 1)
                     return Response.ok(users.get(0)).build();
 
@@ -784,7 +780,7 @@ public class UserResource extends AlpineResource {
             final boolean modified = qm.addUserToTeam(user, team);
             user = qm.getObjectById(user.getClass(), user.getId());
             if (modified) {
-                super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Added team membership for: " + user.getName() + " / team: " + team.getName());
+                super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Added team membership for: %s / team: %s".formatted(user.getName(), team.getName()));
                 return Response.ok(user).build();
             } else {
                 return Response.status(Response.Status.NOT_MODIFIED).entity("The user is already a member of the specified team.").build();
