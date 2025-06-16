@@ -19,10 +19,12 @@
 package org.dependencytrack.resources.v1;
 
 import alpine.common.logging.Logger;
+import alpine.model.LdapUser;
+import alpine.model.ManagedUser;
+import alpine.model.OidcUser;
 import alpine.model.Permission;
 import alpine.model.Team;
 import alpine.model.User;
-import alpine.model.UserType;
 import alpine.server.auth.PermissionRequired;
 import alpine.server.resources.AlpineResource;
 import io.swagger.v3.oas.annotations.Operation;
@@ -34,6 +36,8 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
+
+import org.apache.commons.lang3.StringUtils;
 import org.dependencytrack.auth.Permissions;
 import org.dependencytrack.model.Role;
 import org.dependencytrack.model.validation.ValidUuid;
@@ -164,11 +168,16 @@ public class PermissionResource extends AlpineResource {
             @Parameter(description = "A valid username", required = true)
             @PathParam("username") String username,
             @Parameter(description = "A valid permission", required = true)
-            @QueryParam("userType") UserType userType,
+            @QueryParam("userType") String type,
             @PathParam("permission") String permissionName) {
         try (QueryManager qm = new QueryManager()) {
-            Class <? extends User> userClass = (userType != null ? userType.getUserClass() : User.class);
-            User user = qm.getUser(username, userClass);
+            User user = qm.getUser(username, (Class<? extends User>) switch (StringUtils.defaultString(type).toLowerCase()) {
+                case "managed" -> ManagedUser.class;
+                case "ldap" -> LdapUser.class;
+                case "oidc" -> OidcUser.class;
+                default -> User.class;
+            });
+
             if (user == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The user could not be found.").build();
             }
@@ -183,7 +192,9 @@ public class PermissionResource extends AlpineResource {
                 permissions.remove(permission);
                 user.setPermissions(permissions);
                 user = qm.persist(user);
-                super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Removed permission for user: " + user.getName() + " / permission: " + permission.getName());
+                super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT,
+                        "Removed permission for user: " + user.getUsername() + " / permission: "
+                                + permission.getName());
                 return Response.ok(user).build();
             }
 
@@ -377,8 +388,12 @@ public class PermissionResource extends AlpineResource {
     public Response setUserPermissions(
             @Parameter(description = "A username and valid list permission") @Valid final UserPermissionsSetRequest request) {
         try (QueryManager qm = new QueryManager()) {
-            final Class<? extends User> userClass = request.userType() != null ? request.userType().getUserClass() : User.class;
-            User user = qm.getUser(request.username(), userClass);
+            User user = qm.getUser(request.username(), (Class<? extends User>) switch (StringUtils.defaultString(request.userType()).toLowerCase()) {
+                case "managed" -> ManagedUser.class;
+                case "ldap" -> LdapUser.class;
+                case "oidc" -> OidcUser.class;
+                default -> User.class;
+            });
 
             if (user == null)
                 return Response.status(Response.Status.NOT_FOUND).entity("The user could not be found.").build();

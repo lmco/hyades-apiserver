@@ -22,12 +22,10 @@ package org.dependencytrack.resources.v1.vo;
 import java.util.Set;
 
 import org.dependencytrack.model.validation.ValidUuid;
-import org.dependencytrack.resources.v1.serializers.UserTypeDeserializer;
 
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
 
 import alpine.common.validation.RegexSequence;
-import alpine.model.UserType;
 import alpine.server.json.TrimmedStringDeserializer;
 
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -38,8 +36,7 @@ import jakarta.validation.constraints.Pattern;
 
 public record TeamsSetRequest(
         @Schema(requiredMode = Schema.RequiredMode.NOT_REQUIRED)
-        @JsonDeserialize(using = UserTypeDeserializer.class)
-        UserType userType,
+        String userType,
 
         @Schema(requiredMode = Schema.RequiredMode.REQUIRED)
         @NotBlank

@@ -26,7 +26,6 @@ import alpine.model.OidcUser;
 import alpine.model.Permission;
 import alpine.model.Team;
 import alpine.model.User;
-import alpine.model.UserType;
 import alpine.notification.Notification;
 import alpine.notification.NotificationLevel;
 import alpine.security.crypto.KeyManager;
@@ -283,10 +282,10 @@ public class UserResource extends AlpineResource {
             ),
             @ApiResponse(responseCode = "401", description = "Unauthorized")
     })
-    @PermissionRequired({Permissions.Constants.ACCESS_MANAGEMENT, Permissions.Constants.ACCESS_MANAGEMENT_READ})
+    @PermissionRequired({ Permissions.Constants.ACCESS_MANAGEMENT, Permissions.Constants.ACCESS_MANAGEMENT_READ })
     public Response getUsers(
-        @QueryParam("type") UserType type,
-        @QueryParam("username") String username) {
+            @QueryParam("userType") String type,
+            @QueryParam("username") String username) {
         try (QueryManager qm = new QueryManager(getAlpineRequest())) {
             final List<User> users;
             if (type == null) {
@@ -294,7 +293,13 @@ public class UserResource extends AlpineResource {
                 return Response.ok(users).header(TOTAL_COUNT_HEADER, users.size()).build();
             }
 
-            Query<? extends User> query = qm.getPersistenceManager().newQuery(type.getUserClass());
+            Query<? extends User> query = qm.getPersistenceManager()
+                    .newQuery((Class<? extends User>) switch (StringUtils.defaultString(type).toLowerCase()) {
+                        case "managed" -> ManagedUser.class;
+                        case "ldap" -> LdapUser.class;
+                        case "oidc" -> OidcUser.class;
+                        default -> User.class;
+                    });
 
             if (username != null)
                 query.filter("username == :username").setParameters(username);
@@ -305,18 +310,14 @@ public class UserResource extends AlpineResource {
                 query.closeAll();
             }
 
-            if(users == null) {
-                StringBuilder errStr = new StringBuilder();
-
-                errStr.append(username != null ? "User '%s'".formatted(username) : "Users");
-                errStr.append(type != null ? " of type '%s'".formatted(type) : " of any type");
-                errStr.append(" could not be found.");
-
-                return Response.status(Response.Status.NOT_FOUND).entity(errStr.toString()).build();
-            }
+            if (users == null)
+                return Response.status(Response.Status.NOT_FOUND)
+                        .entity("No user(s) found for the given criteria [type=%s, username=%s]"
+                                .formatted(type, username))
+                        .build();
 
             if (username != null && users.size() == 1)
-                    return Response.ok(users.get(0)).build();
+                return Response.ok(users.get(0)).build();
 
             return Response.ok(users).header(TOTAL_COUNT_HEADER, users.size()).build();
 
@@ -780,7 +781,7 @@ public class UserResource extends AlpineResource {
             final boolean modified = qm.addUserToTeam(user, team);
             user = qm.getObjectById(user.getClass(), user.getId());
             if (modified) {
-                super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Added team membership for: %s / team: %s".formatted(user.getName(), team.getName()));
+                super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Added team membership for: %s / team: %s".formatted(user.getUsername(), team.getName()));
                 return Response.ok(user).build();
             } else {
                 return Response.status(Response.Status.NOT_MODIFIED).entity("The user is already a member of the specified team.").build();
@@ -850,8 +851,13 @@ public class UserResource extends AlpineResource {
     public Response setUserTeams(
             @Parameter(description = "Username and list of UUIDs to assign to user", required = true) @Valid TeamsSetRequest request) {
         try (QueryManager qm = new QueryManager()) {
-            final Class<? extends User> userClass = request.userType() != null ? request.userType().getUserClass() : User.class;
-            User user = qm.getUser(request.username(), userClass);
+            User user = qm.getUser(request.username(),
+                    (Class<? extends User>) switch (StringUtils.defaultString(request.userType()).toLowerCase()) {
+                        case "managed" -> ManagedUser.class;
+                        case "ldap" -> LdapUser.class;
+                        case "oidc" -> OidcUser.class;
+                        default -> User.class;
+                    });
 
             if (user == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The user could not be found.").build();
