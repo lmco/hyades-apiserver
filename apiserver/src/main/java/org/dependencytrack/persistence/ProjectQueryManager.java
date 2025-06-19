@@ -142,8 +142,8 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
         final Project project = getObjectByUuid(Project.class, uuid, Project.FetchGroup.ALL.name());
         if (project != null) {
             // set Metrics to minimize the number of round trips a client needs to make
-            project.setMetrics(withJdbiHandle(handle ->
-                    handle.attach(MetricsDao.class).getMostRecentProjectMetrics(project.getId())));
+            project.setMetrics(withJdbiHandle(
+                    handle -> handle.attach(MetricsDao.class).getMostRecentProjectMetrics(project.getId())));
             // set ProjectVersions to minimize the number of round trips a client needs to make
             project.setVersions(getProjectVersions(project));
         }
@@ -174,8 +174,8 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
         final Project project = singleResult(query.executeWithMap(params));
         if (project != null) {
             // set Metrics to prevent extra round trip
-            project.setMetrics(withJdbiHandle(handle ->
-                    handle.attach(MetricsDao.class).getMostRecentProjectMetrics(project.getId())));
+            project.setMetrics(withJdbiHandle(
+                    handle -> handle.attach(MetricsDao.class).getMostRecentProjectMetrics(project.getId())));
             // set ProjectVersions to prevent extra round trip
             project.setVersions(getProjectVersions(project));
         }
@@ -206,8 +206,8 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
         final Project project = singleResult(query.executeWithMap(params));
         if (project != null) {
             // set Metrics to prevent extra round trip
-            project.setMetrics(withJdbiHandle(handle ->
-                    handle.attach(MetricsDao.class).getMostRecentProjectMetrics(project.getId())));
+            project.setMetrics(withJdbiHandle(
+                    handle -> handle.attach(MetricsDao.class).getMostRecentProjectMetrics(project.getId())));
             // set ProjectVersions to prevent extra round trip
             project.setVersions(getProjectVersions(project));
         }
@@ -216,7 +216,7 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
 
     @Override
     public Project createProject(String name, String description, String version, Collection<Tag> tags, Project parent,
-                                 PackageURL purl, Date inactiveSince, boolean commitIndex) {
+            PackageURL purl, Date inactiveSince, boolean commitIndex) {
         return createProject(name, description, version, tags, parent, purl, inactiveSince, false, commitIndex);
     }
 
@@ -236,7 +236,7 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
      */
     @Override
     public Project createProject(String name, String description, String version, Collection<Tag> tags, Project parent,
-                                 PackageURL purl, Date inactiveSince, boolean isLatest, boolean commitIndex) {
+            PackageURL purl, Date inactiveSince, boolean isLatest, boolean commitIndex) {
         final Project project = new Project();
         project.setName(name);
         project.setDescription(description);
@@ -264,7 +264,7 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
         final Project oldLatestProject = project.isLatest() ? getLatestProjectVersion(project.getName()) : null;
         final Project result = callInTransaction(() -> {
             // Remove isLatest flag from current latest project version, if the new project will be the latest
-            if(oldLatestProject != null) {
+            if (oldLatestProject != null) {
                 oldLatestProject.setIsLatest(false);
                 persist(oldLatestProject);
             }
@@ -313,7 +313,7 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
         project.setActive(transientProject.isActive());
 
         final Project oldLatestProject;
-        if(Boolean.TRUE.equals(transientProject.isLatest()) && Boolean.FALSE.equals(project.isLatest())) {
+        if (Boolean.TRUE.equals(transientProject.isLatest()) && Boolean.FALSE.equals(project.isLatest())) {
             oldLatestProject = getLatestProjectVersion(project.getName());
         } else {
             oldLatestProject = null;
@@ -339,7 +339,7 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
 
         final Project result = callInTransaction(() -> {
             // Remove isLatest flag from current latest project version, if this project will be the latest now
-            if(oldLatestProject != null) {
+            if (oldLatestProject != null) {
                 oldLatestProject.setIsLatest(false);
                 persist(oldLatestProject);
             }
@@ -362,8 +362,7 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
             final boolean includeAuditHistory,
             final boolean includeACL,
             final boolean includePolicyViolations,
-            final boolean makeCloneLatest
-    ) {
+            final boolean makeCloneLatest) {
         final AtomicReference<Project> oldLatestProject = new AtomicReference<>();
         final var jsonMapper = new JsonMapper();
         return callInTransaction(() -> {
@@ -379,7 +378,7 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
                         Project was supposed to be cloned to version %s, \
                         but that version already exists""".formatted(newVersion));
             }
-            if(makeCloneLatest) {
+            if (makeCloneLatest) {
                 oldLatestProject.set(source.isLatest() ? source : getLatestProjectVersion(source.getName()));
             } else {
                 oldLatestProject.set(null);
@@ -404,7 +403,7 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
             }
             project.setParent(source.getParent());
             // Remove isLatest flag from current latest project version, if this project will be the latest now
-            if(oldLatestProject.get() != null) {
+            if (oldLatestProject.get() != null) {
                 oldLatestProject.get().setIsLatest(false);
                 persist(oldLatestProject.get());
             }
@@ -456,7 +455,8 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
                         final Component clonedComponent = cloneComponent(sourceComponent, project, false);
 
                         if (sourceComponent.getOccurrences() != null && !sourceComponent.getOccurrences().isEmpty()) {
-                            final var clonedOccurrences = new HashSet<ComponentOccurrence>(sourceComponent.getOccurrences().size());
+                            final var clonedOccurrences = new HashSet<ComponentOccurrence>(
+                                    sourceComponent.getOccurrences().size());
                             for (final ComponentOccurrence sourceOccurrence : sourceComponent.getOccurrences()) {
                                 final var clonedOccurrence = new ComponentOccurrence();
                                 clonedOccurrence.setComponent(clonedComponent);
@@ -473,7 +473,8 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
                         }
 
                         if (sourceComponent.getProperties() != null && !sourceComponent.getProperties().isEmpty()) {
-                            final var clonedProperties = new ArrayList<ComponentProperty>(sourceComponent.getProperties().size());
+                            final var clonedProperties = new ArrayList<ComponentProperty>(
+                                    sourceComponent.getProperties().size());
                             for (final ComponentProperty sourceProperty : sourceComponent.getProperties()) {
                                 final ComponentProperty clonedProperty = new ComponentProperty();
                                 clonedProperty.setComponent(clonedComponent);
@@ -491,19 +492,24 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
 
                         // Add vulnerabilties and finding attribution from the source component to the cloned component
                         for (Vulnerability vuln : sourceComponent.getVulnerabilities()) {
-                            final FindingAttribution sourceAttribution = this.getFindingAttribution(vuln, sourceComponent);
-                            this.addVulnerability(vuln, clonedComponent, sourceAttribution.getAnalyzerIdentity(), sourceAttribution.getAlternateIdentifier(),
+                            final FindingAttribution sourceAttribution = this.getFindingAttribution(vuln,
+                                    sourceComponent);
+                            this.addVulnerability(vuln, clonedComponent, sourceAttribution.getAnalyzerIdentity(),
+                                    sourceAttribution.getAlternateIdentifier(),
                                     sourceAttribution.getReferenceUrl(), sourceAttribution.getAttributedOn());
                         }
 
                         clonedComponentById.put(clonedComponent.getId(), clonedComponent);
                         clonedComponentBySourceComponentId.put(sourceComponent.getId(), clonedComponent);
-                        clonedComponentUuidBySourceComponentUuid.put(sourceComponent.getUuid(), clonedComponent.getUuid());
+                        clonedComponentUuidBySourceComponentUuid.put(sourceComponent.getUuid(),
+                                clonedComponent.getUuid());
 
                         if (clonedComponent.getDirectDependencies() != null) {
-                            final Set<UUID> directDepsUuids = parseDirectDependenciesUuids(jsonMapper, clonedComponent.getDirectDependencies());
+                            final Set<UUID> directDepsUuids = parseDirectDependenciesUuids(jsonMapper,
+                                    clonedComponent.getDirectDependencies());
                             if (!directDepsUuids.isEmpty()) {
-                                directDepsSourceComponentUuidsByClonedComponentId.put(clonedComponent.getId(), directDepsUuids);
+                                directDepsSourceComponentUuidsByClonedComponentId.put(clonedComponent.getId(),
+                                        directDepsUuids);
                             }
                         }
                     }
@@ -534,7 +540,8 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
 
             for (final long componentId : directDepsSourceComponentUuidsByClonedComponentId.keySet()) {
                 final Component component = clonedComponentById.get(componentId);
-                final Set<UUID> sourceComponentUuids = directDepsSourceComponentUuidsByClonedComponentId.get(componentId);
+                final Set<UUID> sourceComponentUuids = directDepsSourceComponentUuidsByClonedComponentId
+                        .get(componentId);
 
                 String directDependencies = component.getDirectDependencies();
                 for (final UUID sourceComponentUuid : sourceComponentUuids) {
@@ -569,7 +576,8 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
                     for (final Analysis sourceAnalysis : analyses) {
                         Analysis analysis = new Analysis();
                         analysis.setAnalysisState(sourceAnalysis.getAnalysisState());
-                        final Component clonedComponent = clonedComponentBySourceComponentId.get(sourceAnalysis.getComponent().getId());
+                        final Component clonedComponent = clonedComponentBySourceComponentId
+                                .get(sourceAnalysis.getComponent().getId());
                         if (clonedComponent == null) {
                             break;
                         }
@@ -607,8 +615,10 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
                 final List<PolicyViolation> sourcePolicyViolations = getAllPolicyViolations(source);
                 if (sourcePolicyViolations != null) {
                     for (final PolicyViolation policyViolation : sourcePolicyViolations) {
-                        final Component destinationComponent = clonedComponentBySourceComponentId.get(policyViolation.getComponent().getId());
-                        final PolicyViolation clonedPolicyViolation = clonePolicyViolation(policyViolation, destinationComponent);
+                        final Component destinationComponent = clonedComponentBySourceComponentId
+                                .get(policyViolation.getComponent().getId());
+                        final PolicyViolation clonedPolicyViolation = clonePolicyViolation(policyViolation,
+                                destinationComponent);
                         persist(clonedPolicyViolation);
                     }
                 }
@@ -632,8 +642,8 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
 
             while (jsonParser.nextToken() != null) {
                 if (jsonParser.currentToken() == JsonToken.FIELD_NAME
-                    && "uuid".equals(jsonParser.currentName())
-                    && jsonParser.nextToken() == JsonToken.VALUE_STRING) {
+                        && "uuid".equals(jsonParser.currentName())
+                        && jsonParser.nextToken() == JsonToken.VALUE_STRING) {
                     uuids.add(UUID.fromString(jsonParser.getValueAsString()));
                 }
             }
@@ -654,9 +664,10 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
      * @return the created ProjectProperty object
      */
     @Override
-    public ProjectProperty createProjectProperty(final Project project, final String groupName, final String propertyName,
-                                                 final String propertyValue, final ProjectProperty.PropertyType propertyType,
-                                                 final String description) {
+    public ProjectProperty createProjectProperty(final Project project, final String groupName,
+            final String propertyName,
+            final String propertyValue, final ProjectProperty.PropertyType propertyType,
+            final String description) {
         final ProjectProperty property = new ProjectProperty();
         property.setProject(project);
         property.setGroupName(groupName);
@@ -676,8 +687,10 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
      * @return a ProjectProperty object
      */
     @Override
-    public ProjectProperty getProjectProperty(final Project project, final String groupName, final String propertyName) {
-        final Query<ProjectProperty> query = this.pm.newQuery(ProjectProperty.class, "project == :project && groupName == :groupName && propertyName == :propertyName");
+    public ProjectProperty getProjectProperty(final Project project, final String groupName,
+            final String propertyName) {
+        final Query<ProjectProperty> query = this.pm.newQuery(ProjectProperty.class,
+                "project == :project && groupName == :groupName && propertyName == :propertyName");
         query.setRange(0, 1);
         return singleResult(query.execute(project, groupName, propertyName));
     }
@@ -749,7 +762,8 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
     public boolean hasAccess(final Principal principal, final Project project) {
         if (!isEnabled(ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED)
                 || principal == null // System request (e.g. MetricsUpdateTask, etc) where there isn't a principal
-                || super.hasAccessManagementPermission(principal) // TODO: After Alpine >= 3.2.0: request.getEffectivePermission().contains(Permissions.ACCESS_MANAGEMENT.name())
+                || super.hasAccessManagementPermission(principal) // TODO: After Alpine >= 3.2.0:
+                                                                  // request.getEffectivePermission().contains(Permissions.ACCESS_MANAGEMENT.name())
                 || getEffectivePermissions(principal).contains(Permissions.Constants.PORTFOLIO_ACCESS_CONTROL_BYPASS))
             return true;
 
@@ -757,36 +771,36 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
 
         final Query<?> query;
         switch (principal) {
-            case User user -> {
-                query = pm.newQuery(Query.SQL, /* language=SQL */ """
-                                SELECT EXISTS(
-                                  SELECT 1
-                                    FROM "USER_PROJECT_EFFECTIVE_PERMISSIONS" AS upep
-                                   INNER JOIN "PROJECT_HIERARCHY" AS ph
-                                      ON ph."PARENT_PROJECT_ID" = upep."PROJECT_ID"
-                                   WHERE ph."CHILD_PROJECT_ID" = ?
-                                     AND upep."USER_ID" = ?
-                                     AND upep."PERMISSION_NAME" = 'VIEW_PORTFOLIO'
-                                )
-                                """)
-                        .setParameters(project.getId(), user.getId());
-            }
-            case ApiKey apiKey when !teamIds.isEmpty() -> {
-                query = pm.newQuery(Query.SQL, /* language=SQL */ """
-                                SELECT EXISTS(
-                                  SELECT 1
-                                    FROM "PROJECT_ACCESS_TEAMS" AS pat
-                                   INNER JOIN "PROJECT_HIERARCHY" AS ph
-                                      ON ph."PARENT_PROJECT_ID" = pat."PROJECT_ID"
-                                   WHERE pat."TEAM_ID" = ANY(?)
-                                     AND ph."CHILD_PROJECT_ID" = ?
-                                )
-                                """)
-                        .setParameters(teamIds.toArray(Long[]::new), project.getId());
-            }
-            default -> {
-                return false;
-            }
+        case User user -> {
+            query = pm.newQuery(Query.SQL, /* language=SQL */ """
+                    SELECT EXISTS(
+                      SELECT 1
+                        FROM "USER_PROJECT_EFFECTIVE_PERMISSIONS" AS upep
+                       INNER JOIN "PROJECT_HIERARCHY" AS ph
+                          ON ph."PARENT_PROJECT_ID" = upep."PROJECT_ID"
+                       WHERE ph."CHILD_PROJECT_ID" = ?
+                         AND upep."USER_ID" = ?
+                         AND upep."PERMISSION_NAME" = 'VIEW_PORTFOLIO'
+                    )
+                    """)
+                    .setParameters(project.getId(), user.getId());
+        }
+        case ApiKey apiKey when !teamIds.isEmpty() -> {
+            query = pm.newQuery(Query.SQL, /* language=SQL */ """
+                    SELECT EXISTS(
+                      SELECT 1
+                        FROM "PROJECT_ACCESS_TEAMS" AS pat
+                       INNER JOIN "PROJECT_HIERARCHY" AS ph
+                          ON ph."PARENT_PROJECT_ID" = pat."PROJECT_ID"
+                       WHERE pat."TEAM_ID" = ANY(?)
+                         AND ph."CHILD_PROJECT_ID" = ?
+                    )
+                    """)
+                    .setParameters(teamIds.toArray(Long[]::new), project.getId());
+        }
+        default -> {
+            return false;
+        }
         }
 
         return executeAndCloseResultUnique(query, Boolean.class);
@@ -794,20 +808,21 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
 
     void preprocessACLs(final Query<?> query, final String inputFilter, final Map<String, Object> params) {
         if (principal == null
-            || !isEnabled(ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED)
-            || getEffectivePermissions(principal).contains(Permissions.Constants.PORTFOLIO_ACCESS_CONTROL_BYPASS)) {
+                || !isEnabled(ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED)
+                || getEffectivePermissions(principal).contains(Permissions.Constants.PORTFOLIO_ACCESS_CONTROL_BYPASS)) {
             query.setFilter(inputFilter);
             return;
         }
 
         String projectMemberFieldName = null;
-        final org.datanucleus.store.query.Query<?> internalQuery = ((JDOQuery<?>)query).getInternalQuery();
+        final org.datanucleus.store.query.Query<?> internalQuery = ((JDOQuery<?>) query).getInternalQuery();
         if (!Project.class.equals(internalQuery.getCandidateClass())) {
             // NB: The query does not directly target Project, but if it has a relationship
             // with Project we can still make the ACL check work. If the query candidate
             // has EXACTLY one persistent field of type Project, we'll use that.
             // If there are more than one, or none at all, we fail to avoid unintentional behavior.
-            final TypeMetadata candidateTypeMetadata = pm.getPersistenceManagerFactory().getMetadata(internalQuery.getCandidateClassName());
+            final TypeMetadata candidateTypeMetadata = pm.getPersistenceManagerFactory()
+                    .getMetadata(internalQuery.getCandidateClassName());
 
             for (final MemberMetadata memberMetadata : candidateTypeMetadata.getMembers()) {
                 if (!Project.class.getName().equals(memberMetadata.getFieldType())) {
@@ -829,22 +844,22 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
         }
 
         final String aclCondition = switch (principal) {
-            case ApiKey apiKey -> {
-                final Set<Long> teamIds = getTeamIds(apiKey);
-                if (teamIds.isEmpty()) {
-                    yield "false";
-                }
+        case ApiKey apiKey -> {
+            final Set<Long> teamIds = getTeamIds(apiKey);
+            if (teamIds.isEmpty()) {
+                yield "false";
+            }
 
-                params.put("projectAclTeamIds", teamIds.toArray(new Long[0]));
-                yield "%s.isAccessibleBy(:projectAclTeamIds)".formatted(
-                        requireNonNullElse(projectMemberFieldName, "this"));
-            }
-            case User user -> {
-                params.put("projectAclUserId", user.getId());
-                yield "%s.isAccessibleBy(:projectAclUserId)".formatted(
-                        requireNonNullElse(projectMemberFieldName, "this"));
-            }
-            default -> "false";
+            params.put("projectAclTeamIds", teamIds.toArray(new Long[0]));
+            yield "%s.isAccessibleBy(:projectAclTeamIds)".formatted(
+                    requireNonNullElse(projectMemberFieldName, "this"));
+        }
+        case User user -> {
+            params.put("projectAclUserId", user.getId());
+            yield "%s.isAccessibleBy(:projectAclUserId)".formatted(
+                    requireNonNullElse(projectMemberFieldName, "this"));
+        }
+        default -> "false";
         };
 
         if (inputFilter != null && !inputFilter.isBlank()) {
@@ -868,27 +883,27 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
     public boolean updateNewProjectACL(Project project, Principal principal, Role role) {
         final boolean aclEnabled = isEnabled(ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED);
         switch (principal) {
-            case ApiKey apiKey when aclEnabled -> {
-                final var apiTeam = apiKey.getTeams().stream().findFirst();
-                if (apiTeam.isPresent()) {
-                    LOGGER.debug("adding Team to ACL of newly created project");
-                    final Team team = getObjectByUuid(Team.class, apiTeam.get().getUuid());
-                    project.addAccessTeam(team);
-                    persist(project);
-                    return true;
-                } else {
-                    LOGGER.warn("API Key without a Team, unable to assign team ACL to project.");
-                    return false;
-                }
-            }
-            case User user when aclEnabled -> {
-                addRoleToUser(getUser(user.getUsername()), getRole(role.getUuid().toString()), project);
+        case ApiKey apiKey when aclEnabled -> {
+            final var apiTeam = apiKey.getTeams().stream().findFirst();
+            if (apiTeam.isPresent()) {
+                LOGGER.debug("adding Team to ACL of newly created project");
+                final Team team = getObjectByUuid(Team.class, apiTeam.get().getUuid());
+                project.addAccessTeam(team);
+                persist(project);
                 return true;
-            }
-            default -> {
-                // No ACL update for other principals
+            } else {
+                LOGGER.warn("API Key without a Team, unable to assign team ACL to project.");
                 return false;
             }
+        }
+        case User user when aclEnabled -> {
+            addRoleToUser(getUser(user.getUsername()), getRole(role.getUuid().toString()), project);
+            return true;
+        }
+        default -> {
+            // No ACL update for other principals
+            return false;
+        }
         }
     }
 
@@ -903,7 +918,8 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
     }
 
     @Override
-    public PaginatedResult getChildrenProjects(final UUID uuid, final boolean includeMetrics, final boolean excludeInactive) {
+    public PaginatedResult getChildrenProjects(final UUID uuid, final boolean includeMetrics,
+            final boolean excludeInactive) {
         final PaginatedResult result;
         final Query<Project> query = pm.newQuery(Project.class);
         if (orderBy == null) {
@@ -939,7 +955,8 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
     }
 
     @Override
-    public PaginatedResult getChildrenProjects(final Classifier classifier, final UUID uuid, final boolean includeMetrics, final boolean excludeInactive) {
+    public PaginatedResult getChildrenProjects(final Classifier classifier, final UUID uuid,
+            final boolean includeMetrics, final boolean excludeInactive) {
         final PaginatedResult result;
         final Query<Project> query = pm.newQuery(Project.class);
         if (orderBy == null) {
@@ -966,7 +983,8 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
     }
 
     @Override
-    public PaginatedResult getChildrenProjects(final Tag tag, final UUID uuid, final boolean includeMetrics, final boolean excludeInactive) {
+    public PaginatedResult getChildrenProjects(final Tag tag, final UUID uuid, final boolean includeMetrics,
+            final boolean excludeInactive) {
         final PaginatedResult result;
         final Query<Project> query = pm.newQuery(Project.class);
         if (orderBy == null) {
@@ -1025,14 +1043,16 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
         preprocessACLs(query, queryFilter, params);
         result = execute(query, params);
 
-        result.setObjects(result.getList(Project.class).stream().filter(p -> !isChildOf(p, project.getUuid()) && !p.getUuid().equals(project.getUuid())).toList());
+        result.setObjects(result.getList(Project.class).stream()
+                .filter(p -> !isChildOf(p, project.getUuid()) && !p.getUuid().equals(project.getUuid())).toList());
         result.setTotal(result.getObjects().size());
 
         return result;
     }
 
     @Override
-    public PaginatedResult getProjectsWithoutDescendantsOf(final String name, final boolean excludeInactive, Project project) {
+    public PaginatedResult getProjectsWithoutDescendantsOf(final String name, final boolean excludeInactive,
+            Project project) {
         final PaginatedResult result;
         final Query<Project> query = pm.newQuery(Project.class);
         if (orderBy == null) {
@@ -1061,7 +1081,8 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
         preprocessACLs(query, queryFilter, params);
         result = execute(query, params);
 
-        result.setObjects(result.getList(Project.class).stream().filter(p -> !isChildOf(p, project.getUuid()) && !p.getUuid().equals(project.getUuid())).toList());
+        result.setObjects(result.getList(Project.class).stream()
+                .filter(p -> !isChildOf(p, project.getUuid()) && !p.getUuid().equals(project.getUuid())).toList());
         result.setTotal(result.getObjects().size());
 
         return result;
@@ -1082,16 +1103,14 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
             query.setFilter("name == :name && version == :version");
             query.setNamedParameters(Map.of(
                     "name", name,
-                    "version", version
-            ));
+                    "version", version));
         } else {
             // Version is optional for projects, but using null
             // for parameter values bypasses the query compilation cache.
             // https://github.com/DependencyTrack/dependency-track/issues/2540
             query.setFilter("name == :name && version == null");
             query.setNamedParameters(Map.of(
-                    "name", name
-            ));
+                    "name", name));
         }
         query.setResult("count(this)");
         try {
