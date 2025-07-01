@@ -19,7 +19,6 @@
 package org.dependencytrack.resources.v1;
 
 import alpine.common.util.UuidUtil;
-import alpine.model.ConfigProperty;
 import alpine.model.IConfigProperty;
 import alpine.model.ManagedUser;
 import alpine.model.Permission;
@@ -28,11 +27,9 @@ import alpine.server.filters.ApiFilter;
 import alpine.server.filters.AuthenticationFeature;
 import alpine.server.filters.AuthorizationFeature;
 import com.fasterxml.jackson.core.StreamReadConstraints;
-import com.github.tomakehurst.wiremock.stubbing.Scenario;
 
 import static com.github.tomakehurst.wiremock.client.WireMock.ok;
 import static com.github.tomakehurst.wiremock.client.WireMock.get;
-import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.stubFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 
@@ -117,9 +114,6 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import javax.crypto.SecretKey;
-import javax.crypto.KeyGenerator;
-
 import static net.javacrumbs.jsonunit.assertj.JsonAssertions.assertThatJson;
 import static net.javacrumbs.jsonunit.assertj.JsonAssertions.json;
 import static org.apache.commons.io.IOUtils.resourceToByteArray;
@@ -139,7 +133,6 @@ import static org.dependencytrack.proto.notification.v1.Level.LEVEL_ERROR;
 import static org.dependencytrack.proto.notification.v1.Scope.SCOPE_PORTFOLIO;
 import static org.dependencytrack.util.KafkaTestUtil.deserializeValue;
 import static org.hamcrest.CoreMatchers.equalTo;
-import static org.junit.Assert.assertEquals;
 
 @RunWith(JUnitParamsRunner.class)
 public class BomResourceTest extends ResourceTest {
