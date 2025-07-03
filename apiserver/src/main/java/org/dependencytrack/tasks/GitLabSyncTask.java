@@ -72,7 +72,6 @@ public class GitLabSyncTask implements LoggableSubscriber {
         LOGGER.info("Starting GitLab sync task");
 
         try (QueryManager qm = new QueryManager()) {
-            // OidcUser user = gitLabSyncEvent.getUser();
             final OidcUser user = qm.getUser(gitLabSyncEvent.getUser().getUsername(), OidcUser.class);
             if (user == null) {
                 LOGGER.warn("GitLab syncing is enabled, but no authenticated user was provided. Skipping.");
