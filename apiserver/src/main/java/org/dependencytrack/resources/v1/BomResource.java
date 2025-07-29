@@ -439,7 +439,7 @@ public class BomResource extends AbstractApiResource {
 
             String accessLevel = claims.get(GitLabClient.USER_ACCESS_LEVEL_CLAIM, String.class);
             if (accessLevel == null) {
-                return Response.status(Response.Status.UNAUTHORIZED)
+                return Response.status(Response.Status.BAD_REQUEST)
                         .entity("Missing user_access_level claim in token").build();
             }
 
