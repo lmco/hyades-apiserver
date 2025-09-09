@@ -27,6 +27,17 @@ import alpine.server.filters.ApiFilter;
 import alpine.server.filters.AuthenticationFeature;
 import alpine.server.filters.AuthorizationFeature;
 import com.fasterxml.jackson.core.StreamReadConstraints;
+
+import static com.github.tomakehurst.wiremock.client.WireMock.ok;
+import static com.github.tomakehurst.wiremock.client.WireMock.get;
+import static com.github.tomakehurst.wiremock.client.WireMock.stubFor;
+import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
+
+import com.github.tomakehurst.wiremock.core.WireMockConfiguration;
+
+import com.github.tomakehurst.wiremock.junit.WireMockRule;
+import com.github.tomakehurst.wiremock.stubbing.Scenario;
+
 import jakarta.json.JsonObject;
 import jakarta.ws.rs.client.ClientBuilder;
 import jakarta.ws.rs.client.Entity;
@@ -37,6 +48,7 @@ import junitparams.Parameters;
 import net.javacrumbs.jsonunit.core.Option;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
+import org.apache.http.HttpHeaders;
 import org.apache.http.HttpStatus;
 import org.cyclonedx.proto.v1_6.Bom;
 import org.dependencytrack.JerseyTestRule;
@@ -81,6 +93,7 @@ import org.junit.runner.RunWith;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.FileVisitResult;
@@ -90,6 +103,7 @@ import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
@@ -109,6 +123,10 @@ import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.dependencytrack.model.ConfigPropertyConstants.BOM_VALIDATION_MODE;
 import static org.dependencytrack.model.ConfigPropertyConstants.BOM_VALIDATION_TAGS_EXCLUSIVE;
 import static org.dependencytrack.model.ConfigPropertyConstants.BOM_VALIDATION_TAGS_INCLUSIVE;
+import static org.dependencytrack.model.ConfigPropertyConstants.GITLAB_SBOM_PUSH_ENABLED;
+import static org.dependencytrack.model.ConfigPropertyConstants.GITLAB_ENABLED;
+import static org.dependencytrack.model.ConfigPropertyConstants.GITLAB_URL;
+import static org.dependencytrack.model.ConfigPropertyConstants.GITLAB_JWKS_PATH;
 import static org.dependencytrack.persistence.jdbi.JdbiFactory.withJdbiHandle;
 import static org.dependencytrack.proto.notification.v1.Group.GROUP_BOM_VALIDATION_FAILED;
 import static org.dependencytrack.proto.notification.v1.Level.LEVEL_ERROR;
@@ -118,6 +136,9 @@ import static org.hamcrest.CoreMatchers.equalTo;
 
 @RunWith(JUnitParamsRunner.class)
 public class BomResourceTest extends ResourceTest {
+
+    @Rule
+    public WireMockRule wireMockRule = new WireMockRule(WireMockConfiguration.options().dynamicPort());
 
     @ClassRule
     public static JerseyTestRule jersey = new JerseyTestRule(
@@ -1557,6 +1578,77 @@ public class BomResourceTest extends ResourceTest {
         assertThat(project.getTags())
                 .extracting(Tag::getName)
                 .containsExactlyInAnyOrder("tag1", "tag2");
+    }
+
+    @Test
+    public void uploadBomGitLabTest() throws IOException, URISyntaxException, NoSuchAlgorithmException {
+        initializeWithPermissions(Permissions.BOM_UPLOAD, Permissions.PROJECT_CREATION_UPLOAD);
+
+        qm.createConfigProperty(
+                GITLAB_ENABLED.getGroupName(),
+                GITLAB_ENABLED.getPropertyName(),
+                "true",
+                GITLAB_ENABLED.getPropertyType(),
+                GITLAB_ENABLED.getDescription());
+
+        qm.createConfigProperty(
+                GITLAB_SBOM_PUSH_ENABLED.getGroupName(),
+                GITLAB_SBOM_PUSH_ENABLED.getPropertyName(),
+                "true",
+                GITLAB_SBOM_PUSH_ENABLED.getPropertyType(),
+                GITLAB_SBOM_PUSH_ENABLED.getDescription());
+        
+        qm.createConfigProperty(
+                GITLAB_URL.getGroupName(),
+                GITLAB_URL.getPropertyName(),
+                wireMockRule.baseUrl(),
+                GITLAB_URL.getPropertyType(),
+                GITLAB_URL.getDescription());
+
+        qm.createConfigProperty(
+                GITLAB_JWKS_PATH.getGroupName(),
+                GITLAB_JWKS_PATH.getPropertyName(),
+                "/oauth/discovery/keys",
+                GITLAB_JWKS_PATH.getPropertyType(),
+                GITLAB_JWKS_PATH.getDescription());
+
+        String gitLabToken = resourceToString("/unit/upload-bom-gitlab-jwt.txt", StandardCharsets.UTF_8);
+        String jwks = resourceToString("/unit/upload-bom-gitlab-jwks.json", StandardCharsets.UTF_8);
+
+        stubFor(get(urlPathEqualTo("/oauth/discovery/keys"))
+                .inScenario("test-upload-bom-gitlab")
+                .whenScenarioStateIs(Scenario.STARTED)
+                .willReturn(ok().withHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON)
+                        .withBody(jwks))
+                .willSetStateTo("done"));
+
+        File file = new File(IOUtils.resourceToURL("/unit/bom-1.xml").toURI());
+        String bomString = Base64.getEncoder().encodeToString(FileUtils.readFileToByteArray(file));
+
+        final var multiPart = new FormDataMultiPart()
+                .field("gitLab_token", gitLabToken)
+                .field("bom", bomString)
+                .field("autoCreate", "true");
+
+        // NB: The GrizzlyConnectorProvider doesn't work with MultiPart requests.
+        // https://github.com/eclipse-ee4j/jersey/issues/5094
+        final var client = ClientBuilder.newClient(new ClientConfig()
+                .register(MultiPartFeature.class)
+                .connectorProvider(new HttpUrlConnectorProvider()));
+
+        final Response response = client.target(jersey.target(V1_BOM + "/gitlab").getUri()).request()
+                .header(X_API_KEY, apiKey)
+                .post(Entity.entity(multiPart, multiPart.getMediaType()));
+
+        assertThat(response.getStatus()).isEqualTo(200);
+        assertThatJson(getPlainTextBody(response)).isEqualTo("""
+                {
+                  "token": "${json-unit.any-string}"
+                }
+                """);
+        
+        final var projectResponse = qm.getProject("test_project", "1.0.0");
+        assertThat(projectResponse).isNotNull();
     }
 
     @Test

@@ -95,11 +95,21 @@ import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import net.minidev.json.JSONObject;
+
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.StringReader;
+import java.math.BigInteger;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyFactory;
 import java.security.Principal;
+import java.security.PublicKey;
+import java.security.spec.RSAPublicKeySpec;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.Base64;
@@ -137,35 +147,22 @@ public class BomResource extends AbstractApiResource {
 
     @GET
     @Path("/cyclonedx/project/{uuid}")
-    @Produces({CycloneDxMediaType.APPLICATION_CYCLONEDX_XML, CycloneDxMediaType.APPLICATION_CYCLONEDX_JSON, MediaType.APPLICATION_OCTET_STREAM})
-    @Operation(
-            summary = "Returns dependency metadata for a project in CycloneDX format",
-            description = "<p>Requires permission <strong>VIEW_PORTFOLIO</strong></p>"
-    )
+    @Produces({ CycloneDxMediaType.APPLICATION_CYCLONEDX_XML, CycloneDxMediaType.APPLICATION_CYCLONEDX_JSON,
+            MediaType.APPLICATION_OCTET_STREAM })
+    @Operation(summary = "Returns dependency metadata for a project in CycloneDX format", description = "<p>Requires permission <strong>VIEW_PORTFOLIO</strong></p>")
     @ApiResponses(value = {
-            @ApiResponse(
-                    responseCode = "200",
-                    description = "Dependency metadata for a project in CycloneDX format",
-                    content = @Content(schema = @Schema(type = "string"))
-            ),
+            @ApiResponse(responseCode = "200", description = "Dependency metadata for a project in CycloneDX format", content = @Content(schema = @Schema(type = "string"))),
             @ApiResponse(responseCode = "401", description = "Unauthorized"),
-            @ApiResponse(
-                    responseCode = "403",
-                    description = "Access to the requested project is forbidden",
-                    content = @Content(schema = @Schema(implementation = ProblemDetails.class), mediaType = ProblemDetails.MEDIA_TYPE_JSON)),
+            @ApiResponse(responseCode = "403", description = "Access to the requested project is forbidden", content = @Content(schema = @Schema(implementation = ProblemDetails.class), mediaType = ProblemDetails.MEDIA_TYPE_JSON)),
             @ApiResponse(responseCode = "404", description = "The project could not be found")
     })
     @PermissionRequired(Permissions.Constants.VIEW_PORTFOLIO)
     @ResourceAccessRequired
     public Response exportProjectAsCycloneDx(
-            @Parameter(description = "The UUID of the project to export", schema = @Schema(type = "string", format = "uuid"), required = true)
-            @PathParam("uuid") @ValidUuid String uuid,
-            @Parameter(description = "The format to output (defaults to JSON)")
-            @QueryParam("format") String format,
-            @Parameter(description = "Specifies the CycloneDX variant to export. Value options are 'inventory' and 'withVulnerabilities'. (defaults to 'inventory')")
-            @QueryParam("variant") String variant,
-            @Parameter(description = "Force the resulting BOM to be downloaded as a file (defaults to 'false')")
-            @QueryParam("download") boolean download) {
+            @Parameter(description = "The UUID of the project to export", schema = @Schema(type = "string", format = "uuid"), required = true) @PathParam("uuid") @ValidUuid String uuid,
+            @Parameter(description = "The format to output (defaults to JSON)") @QueryParam("format") String format,
+            @Parameter(description = "Specifies the CycloneDX variant to export. Value options are 'inventory' and 'withVulnerabilities'. (defaults to 'inventory')") @QueryParam("variant") String variant,
+            @Parameter(description = "Force the resulting BOM to be downloaded as a file (defaults to 'false')") @QueryParam("download") boolean download) {
         try (QueryManager qm = new QueryManager()) {
             final Project project = qm.getObjectByUuid(Project.class, uuid);
             if (project == null) {
@@ -187,16 +184,24 @@ public class BomResource extends AbstractApiResource {
             try {
                 if (StringUtils.trimToNull(format) == null || format.equalsIgnoreCase("JSON")) {
                     if (download) {
-                        return Response.ok(exporter.export(exporter.create(project), CycloneDXExporter.Format.JSON), MediaType.APPLICATION_OCTET_STREAM)
-                                .header("content-disposition", "attachment; filename=\"" + project.getUuid() + "-" + variant + ".cdx.json\"").build();
+                        return Response
+                                .ok(exporter.export(exporter.create(project), CycloneDXExporter.Format.JSON),
+                                        MediaType.APPLICATION_OCTET_STREAM)
+                                .header("content-disposition",
+                                        "attachment; filename=\"" + project.getUuid() + "-" + variant + ".cdx.json\"")
+                                .build();
                     } else {
                         return Response.ok(exporter.export(exporter.create(project), CycloneDXExporter.Format.JSON),
                                 CycloneDxMediaType.APPLICATION_CYCLONEDX_JSON).build();
                     }
                 } else if (format.equalsIgnoreCase("XML")) {
                     if (download) {
-                        return Response.ok(exporter.export(exporter.create(project), CycloneDXExporter.Format.XML), MediaType.APPLICATION_OCTET_STREAM)
-                                .header("content-disposition", "attachment; filename=\"" + project.getUuid() + "-" + variant + ".cdx.xml\"").build();
+                        return Response
+                                .ok(exporter.export(exporter.create(project), CycloneDXExporter.Format.XML),
+                                        MediaType.APPLICATION_OCTET_STREAM)
+                                .header("content-disposition",
+                                        "attachment; filename=\"" + project.getUuid() + "-" + variant + ".cdx.xml\"")
+                                .build();
                     } else {
                         return Response.ok(exporter.export(exporter.create(project), CycloneDXExporter.Format.XML),
                                 CycloneDxMediaType.APPLICATION_CYCLONEDX_XML).build();
@@ -213,31 +218,19 @@ public class BomResource extends AbstractApiResource {
 
     @GET
     @Path("/cyclonedx/component/{uuid}")
-    @Produces({CycloneDxMediaType.APPLICATION_CYCLONEDX_XML, CycloneDxMediaType.APPLICATION_CYCLONEDX_JSON})
-    @Operation(
-            summary = "Returns dependency metadata for a specific component in CycloneDX format",
-            description = "<p>Requires permission <strong>VIEW_PORTFOLIO</strong></p>"
-    )
+    @Produces({ CycloneDxMediaType.APPLICATION_CYCLONEDX_XML, CycloneDxMediaType.APPLICATION_CYCLONEDX_JSON })
+    @Operation(summary = "Returns dependency metadata for a specific component in CycloneDX format", description = "<p>Requires permission <strong>VIEW_PORTFOLIO</strong></p>")
     @ApiResponses(value = {
-            @ApiResponse(
-                    responseCode = "200",
-                    description = "Dependency metadata for a specific component in CycloneDX format",
-                    content = @Content(schema = @Schema(type = "string"))
-            ),
+            @ApiResponse(responseCode = "200", description = "Dependency metadata for a specific component in CycloneDX format", content = @Content(schema = @Schema(type = "string"))),
             @ApiResponse(responseCode = "401", description = "Unauthorized"),
-            @ApiResponse(
-                    responseCode = "403",
-                    description = "Access to the requested project is forbidden",
-                    content = @Content(schema = @Schema(implementation = ProblemDetails.class), mediaType = ProblemDetails.MEDIA_TYPE_JSON)),
+            @ApiResponse(responseCode = "403", description = "Access to the requested project is forbidden", content = @Content(schema = @Schema(implementation = ProblemDetails.class), mediaType = ProblemDetails.MEDIA_TYPE_JSON)),
             @ApiResponse(responseCode = "404", description = "The component could not be found")
     })
     @PermissionRequired(Permissions.Constants.VIEW_PORTFOLIO)
     @ResourceAccessRequired
     public Response exportComponentAsCycloneDx(
-            @Parameter(description = "The UUID of the component to export", schema = @Schema(type = "string", format = "uuid"), required = true)
-            @PathParam("uuid") @ValidUuid String uuid,
-            @Parameter(description = "The format to output (defaults to JSON)")
-            @QueryParam("format") String format) {
+            @Parameter(description = "The UUID of the component to export", schema = @Schema(type = "string", format = "uuid"), required = true) @PathParam("uuid") @ValidUuid String uuid,
+            @Parameter(description = "The format to output (defaults to JSON)") @QueryParam("format") String format) {
         try (QueryManager qm = new QueryManager()) {
             final Component component = qm.getObjectByUuid(Component.class, uuid);
             if (component == null) {
@@ -266,50 +259,32 @@ public class BomResource extends AbstractApiResource {
     @PUT
     @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.APPLICATION_JSON)
-    @Operation(
-            summary = "Upload a supported bill of material format document",
-            description = """
-                    <p>
-                      Expects CycloneDX and a valid project UUID. If a UUID is not specified,
-                      then the <code>projectName</code> and <code>projectVersion</code> must be specified.
-                      Optionally, if <code>autoCreate</code> is specified and <code>true</code> and the project does not exist,
-                      the project will be created. In this scenario, the principal making the request will
-                      additionally need the <strong>PORTFOLIO_MANAGEMENT</strong>, <strong>PORTFOLIO_MANAGEMENT_CREATE</strong>,
-                      or <strong>PROJECT_CREATION_UPLOAD</strong> permission.
-                    </p>
-                    <p>
-                      The BOM will be validated against the CycloneDX schema. If schema validation fails,
-                      a response with problem details in RFC 9457 format will be returned. In this case,
-                      the response's content type will be <code>application/problem+json</code>.
-                    </p>
-                    <p>
-                      The maximum allowed length of the <code>bom</code> value is 20'000'000 characters.
-                      When uploading large BOMs, the <code>POST</code> endpoint is preferred,
-                      as it does not have this limit.
-                    </p>
-                    <p>Requires permission <strong>BOM_UPLOAD</strong></p>""",
-            operationId = "UploadBomBase64Encoded"
-    )
+    @Operation(summary = "Upload a supported bill of material format document", description = """
+            <p>
+              Expects CycloneDX and a valid project UUID. If a UUID is not specified,
+              then the <code>projectName</code> and <code>projectVersion</code> must be specified.
+              Optionally, if <code>autoCreate</code> is specified and <code>true</code> and the project does not exist,
+              the project will be created. In this scenario, the principal making the request will
+              additionally need the <strong>PORTFOLIO_MANAGEMENT</strong>, <strong>PORTFOLIO_MANAGEMENT_CREATE</strong>,
+              or <strong>PROJECT_CREATION_UPLOAD</strong> permission.
+            </p>
+            <p>
+              The BOM will be validated against the CycloneDX schema. If schema validation fails,
+              a response with problem details in RFC 9457 format will be returned. In this case,
+              the response's content type will be <code>application/problem+json</code>.
+            </p>
+            <p>
+              The maximum allowed length of the <code>bom</code> value is 20'000'000 characters.
+              When uploading large BOMs, the <code>POST</code> endpoint is preferred,
+              as it does not have this limit.
+            </p>
+            <p>Requires permission <strong>BOM_UPLOAD</strong></p>""", operationId = "UploadBomBase64Encoded")
     @ApiResponses(value = {
-            @ApiResponse(
-                    responseCode = "200",
-                    description = "Token to be used for checking BOM processing progress",
-                    content = @Content(schema = @Schema(implementation = BomUploadResponse.class))
-            ),
-            @ApiResponse(
-                    responseCode = "400",
-                    description = "Invalid BOM",
-                    content = @Content(
-                            schema = @Schema(implementation = InvalidBomProblemDetails.class),
-                            mediaType = ProblemDetails.MEDIA_TYPE_JSON
-                    )
-            ),
+            @ApiResponse(responseCode = "200", description = "Token to be used for checking BOM processing progress", content = @Content(schema = @Schema(implementation = BomUploadResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Invalid BOM", content = @Content(schema = @Schema(implementation = InvalidBomProblemDetails.class), mediaType = ProblemDetails.MEDIA_TYPE_JSON)),
             @ApiResponse(responseCode = "400", description = "The uploaded BOM is invalid"),
             @ApiResponse(responseCode = "401", description = "Unauthorized"),
-            @ApiResponse(
-                    responseCode = "403",
-                    description = "Access to the requested project is forbidden",
-                    content = @Content(schema = @Schema(implementation = ProblemDetails.class), mediaType = ProblemDetails.MEDIA_TYPE_JSON)),
+            @ApiResponse(responseCode = "403", description = "Access to the requested project is forbidden", content = @Content(schema = @Schema(implementation = ProblemDetails.class), mediaType = ProblemDetails.MEDIA_TYPE_JSON)),
             @ApiResponse(responseCode = "404", description = "The project could not be found")
     })
     @PermissionRequired(Permissions.Constants.BOM_UPLOAD)
@@ -320,8 +295,7 @@ public class BomResource extends AbstractApiResource {
         if (request.getProject() != null) { // behavior in v3.0.0
             failOnValidationError(
                     validator.validateProperty(request, "project"),
-                    validator.validateProperty(request, "bom")
-            );
+                    validator.validateProperty(request, "bom"));
             try (QueryManager qm = new QueryManager()) {
                 processingResult = qm.callInTransaction(() -> {
                     final Project project = qm.getObjectByUuid(Project.class, request.getProject());
@@ -332,13 +306,14 @@ public class BomResource extends AbstractApiResource {
             failOnValidationError(
                     validator.validateProperty(request, "projectName"),
                     validator.validateProperty(request, "projectVersion"),
-                    validator.validateProperty(request, "bom")
-            );
+                    validator.validateProperty(request, "bom"));
             try (final var qm = new QueryManager()) {
                 processingResult = qm.callInTransaction(() -> {
                     Project project = qm.getProject(request.getProjectName(), request.getProjectVersion());
                     if (project == null && request.isAutoCreate()) {
-                        if (hasPermission(Permissions.Constants.PORTFOLIO_MANAGEMENT) || hasPermission(Permissions.Constants.PORTFOLIO_MANAGEMENT_CREATE) || hasPermission(Permissions.Constants.PROJECT_CREATION_UPLOAD)) {
+                        if (hasPermission(Permissions.Constants.PORTFOLIO_MANAGEMENT)
+                                || hasPermission(Permissions.Constants.PORTFOLIO_MANAGEMENT_CREATE)
+                                || hasPermission(Permissions.Constants.PROJECT_CREATION_UPLOAD)) {
                             Project parent = null;
                             if (request.getParentUUID() != null || request.getParentName() != null) {
                                 if (request.getParentUUID() != null) {
@@ -347,22 +322,25 @@ public class BomResource extends AbstractApiResource {
                                 } else {
                                     failOnValidationError(
                                             validator.validateProperty(request, "parentName"),
-                                            validator.validateProperty(request, "parentVersion")
-                                    );
+                                            validator.validateProperty(request, "parentVersion"));
                                     final String trimmedParentName = StringUtils.trimToNull(request.getParentName());
-                                    final String trimmedParentVersion = StringUtils.trimToNull(request.getParentVersion());
+                                    final String trimmedParentVersion = StringUtils
+                                            .trimToNull(request.getParentVersion());
                                     parent = qm.getProject(trimmedParentName, trimmedParentVersion);
                                 }
 
                                 if (parent == null) { // if parent project is specified but not found
-                                    final var response = Response.status(Response.Status.NOT_FOUND).entity("The parent project could not be found.").build();
+                                    final var response = Response.status(Response.Status.NOT_FOUND)
+                                            .entity("The parent project could not be found.").build();
                                     return new ProcessingResult(response, null);
                                 }
                                 requireAccess(qm, parent, "Access to the specified parent project is forbidden");
                             }
-                            createNewProject(request.getProjectName(), request.getProjectVersion(), request.getProjectTags(), parent, request.isLatestProjectVersion(), null);
+                            createNewProject(request.getProjectName(), request.getProjectVersion(),
+                                    request.getProjectTags(), parent, request.isLatestProjectVersion(), null);
                         } else {
-                            final var response = Response.status(Response.Status.UNAUTHORIZED).entity("The principal does not have permission to create project.").build();
+                            final var response = Response.status(Response.Status.UNAUTHORIZED)
+                                    .entity("The principal does not have permission to create project.").build();
                             return new ProcessingResult(response, null);
                         }
                     }
@@ -424,7 +402,8 @@ public class BomResource extends AbstractApiResource {
             String kid = (String) new ObjectMapper().readValue(headerJson, Map.class).get("kid");
 
             Claims claims = Jwts.parser()
-                    .verifyWith(GitLabClient.getPublicKeyFromJwks(gitlabUrl, gitLabJwksPathProperty.getPropertyValue(), kid))
+                    .verifyWith(GitLabClient.getPublicKeyFromJwks(gitlabUrl, gitLabJwksPathProperty.getPropertyValue(),
+                            kid))
                     .build()
                     .parseSignedClaims(idToken)
                     .getPayload();
@@ -487,7 +466,8 @@ public class BomResource extends AbstractApiResource {
             LOGGER.error(SecurityMarkers.SECURITY_FAILURE, e.getMessage());
             return Response.status(Response.Status.BAD_REQUEST).entity("Received unsupported JWT").build();
         } catch (IOException e) {
-            LOGGER.error(SecurityMarkers.EVENT_FAILURE, "Error reading or parsing the JWT header or JWKS: " + e.getMessage());
+            LOGGER.error(SecurityMarkers.EVENT_FAILURE,
+                    "Error reading or parsing the JWT header or JWKS: " + e.getMessage());
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR).build();
         } catch (Exception e) {
             LOGGER.error(SecurityMarkers.EVENT_FAILURE, "An error occured in uploadBomGitLab: " + e.getMessage());
@@ -498,46 +478,28 @@ public class BomResource extends AbstractApiResource {
     @POST
     @Consumes(MediaType.MULTIPART_FORM_DATA)
     @Produces(MediaType.APPLICATION_JSON)
-    @Operation(
-            summary = "Upload a supported bill of material format document",
-            description = """
-                    <p>
-                      Expects CycloneDX and a valid project UUID. If a UUID is not specified,
-                      then the <code>projectName</code> and <code>projectVersion</code> must be specified.
-                      Optionally, if <code>autoCreate</code> is specified and <code>true</code> and the project does not exist,
-                      the project will be created. In this scenario, the principal making the request will
-                      additionally need the <strong>PORTFOLIO_MANAGEMENT</strong>, <strong>PORTFOLIO_MANAGEMENT_CREATE</strong>,
-                      or <strong>PROJECT_CREATION_UPLOAD</strong> permission.
-                    </p>
-                    <p>
-                      MediaType supported for BOM artifact is 'application/xml', 'application/json' or 'application/x.vnd.cyclonedx+protobuf'.
-                      The BOM will be validated against the CycloneDX schema. If schema validation fails,
-                      a response with problem details in RFC 9457 format will be returned. In this case,
-                      the response's content type will be <code>application/problem+json</code>.
-                    </p>
-                    <p>Requires permission <strong>BOM_UPLOAD</strong></p>""",
-            operationId = "UploadBom"
-    )
+    @Operation(summary = "Upload a supported bill of material format document", description = """
+            <p>
+              Expects CycloneDX and a valid project UUID. If a UUID is not specified,
+              then the <code>projectName</code> and <code>projectVersion</code> must be specified.
+              Optionally, if <code>autoCreate</code> is specified and <code>true</code> and the project does not exist,
+              the project will be created. In this scenario, the principal making the request will
+              additionally need the <strong>PORTFOLIO_MANAGEMENT</strong>, <strong>PORTFOLIO_MANAGEMENT_CREATE</strong>,
+              or <strong>PROJECT_CREATION_UPLOAD</strong> permission.
+            </p>
+            <p>
+              MediaType supported for BOM artifact is 'application/xml', 'application/json' or 'application/x.vnd.cyclonedx+protobuf'.
+              The BOM will be validated against the CycloneDX schema. If schema validation fails,
+              a response with problem details in RFC 9457 format will be returned. In this case,
+              the response's content type will be <code>application/problem+json</code>.
+            </p>
+            <p>Requires permission <strong>BOM_UPLOAD</strong></p>""", operationId = "UploadBom")
     @ApiResponses(value = {
-            @ApiResponse(
-                    responseCode = "200",
-                    description = "Token to be used for checking BOM processing progress",
-                    content = @Content(schema = @Schema(implementation = BomUploadResponse.class))
-            ),
-            @ApiResponse(
-                    responseCode = "400",
-                    description = "Invalid BOM",
-                    content = @Content(
-                            schema = @Schema(implementation = InvalidBomProblemDetails.class),
-                            mediaType = ProblemDetails.MEDIA_TYPE_JSON
-                    )
-            ),
+            @ApiResponse(responseCode = "200", description = "Token to be used for checking BOM processing progress", content = @Content(schema = @Schema(implementation = BomUploadResponse.class))),
+            @ApiResponse(responseCode = "400", description = "Invalid BOM", content = @Content(schema = @Schema(implementation = InvalidBomProblemDetails.class), mediaType = ProblemDetails.MEDIA_TYPE_JSON)),
             @ApiResponse(responseCode = "400", description = "The uploaded BOM is invalid"),
             @ApiResponse(responseCode = "401", description = "Unauthorized"),
-            @ApiResponse(
-                    responseCode = "403",
-                    description = "Access to the requested project is forbidden",
-                    content = @Content(schema = @Schema(implementation = ProblemDetails.class), mediaType = ProblemDetails.MEDIA_TYPE_JSON)),
+            @ApiResponse(responseCode = "403", description = "Access to the requested project is forbidden", content = @Content(schema = @Schema(implementation = ProblemDetails.class), mediaType = ProblemDetails.MEDIA_TYPE_JSON)),
             @ApiResponse(responseCode = "404", description = "The project could not be found")
     })
     @PermissionRequired(Permissions.Constants.BOM_UPLOAD)
@@ -551,8 +513,7 @@ public class BomResource extends AbstractApiResource {
             @FormDataParam("parentVersion") String parentVersion,
             @FormDataParam("parentUUID") String parentUUID,
             @DefaultValue("false") @FormDataParam("isLatest") boolean isLatest,
-            @Parameter(schema = @Schema(type = "string")) @FormDataParam("bom") final List<FormDataBodyPart> artifactParts
-    ) {
+            @Parameter(schema = @Schema(type = "string")) @FormDataParam("bom") final List<FormDataBodyPart> artifactParts) {
         final ProcessingResult processingResult;
         if (projectUuid != null) { // behavior in v3.0.0
             try (QueryManager qm = new QueryManager()) {
@@ -568,7 +529,9 @@ public class BomResource extends AbstractApiResource {
                     final String trimmedProjectVersion = StringUtils.trimToNull(projectVersion);
                     Project project = qm.getProject(trimmedProjectName, trimmedProjectVersion);
                     if (project == null && autoCreate) {
-                        if (hasPermission(Permissions.Constants.PORTFOLIO_MANAGEMENT) || hasPermission(Permissions.Constants.PORTFOLIO_MANAGEMENT_CREATE) || hasPermission(Permissions.Constants.PROJECT_CREATION_UPLOAD)) {
+                        if (hasPermission(Permissions.Constants.PORTFOLIO_MANAGEMENT)
+                                || hasPermission(Permissions.Constants.PORTFOLIO_MANAGEMENT_CREATE)
+                                || hasPermission(Permissions.Constants.PROJECT_CREATION_UPLOAD)) {
                             Project parent = null;
                             if (parentUUID != null || parentName != null) {
                                 if (parentUUID != null) {
@@ -581,17 +544,22 @@ public class BomResource extends AbstractApiResource {
                                 }
 
                                 if (parent == null) { // if parent project is specified but not found
-                                    final var response = Response.status(Response.Status.NOT_FOUND).entity("The parent project could not be found.").build();
+                                    final var response = Response.status(Response.Status.NOT_FOUND)
+                                            .entity("The parent project could not be found.").build();
                                     return new ProcessingResult(response, null);
                                 }
                                 requireAccess(qm, parent, "Access to the specified parent project is forbidden");
                             }
-                            final List<org.dependencytrack.model.Tag> tags = (projectTags != null && !projectTags.isBlank())
-                                    ? Arrays.stream(projectTags.split(",")).map(String::trim).filter(not(String::isEmpty)).map(org.dependencytrack.model.Tag::new).toList()
-                                    : null;
+                            final List<org.dependencytrack.model.Tag> tags = (projectTags != null
+                                    && !projectTags.isBlank())
+                                            ? Arrays.stream(projectTags.split(",")).map(String::trim)
+                                                    .filter(not(String::isEmpty))
+                                                    .map(org.dependencytrack.model.Tag::new).toList()
+                                            : null;
                             createNewProject(projectName, projectVersion, tags, parent, isLatest, null);
                         } else {
-                            final var response = Response.status(Response.Status.UNAUTHORIZED).entity("The principal does not have permission to create project.").build();
+                            final var response = Response.status(Response.Status.UNAUTHORIZED)
+                                    .entity("The principal does not have permission to create project.").build();
                             return new ProcessingResult(response, null);
                         }
                     }
@@ -623,17 +591,20 @@ public class BomResource extends AbstractApiResource {
             requireAccess(qm, project);
 
             final FileMetadata bomFileMetadata;
-            try (final var encodedInputStream = new ByteArrayInputStream(encodedBomData.getBytes(StandardCharsets.UTF_8));
-                 final var decodedInputStream = Base64.getDecoder().wrap(encodedInputStream);
-                 final var byteOrderMarkInputStream = new BOMInputStream(decodedInputStream)) {
+            try (final var encodedInputStream = new ByteArrayInputStream(
+                    encodedBomData.getBytes(StandardCharsets.UTF_8));
+                    final var decodedInputStream = Base64.getDecoder().wrap(encodedInputStream);
+                    final var byteOrderMarkInputStream = new BOMInputStream(decodedInputStream)) {
                 bomFileMetadata = validateAndStoreBom(IOUtils.toByteArray(byteOrderMarkInputStream), project);
             } catch (IOException e) {
-                LOGGER.error("An unexpected error occurred while validating or storing a BOM uploaded to project: " + project.getUuid(), e);
+                LOGGER.error("An unexpected error occurred while validating or storing a BOM uploaded to project: "
+                        + project.getUuid(), e);
                 final var response = Response.status(Response.Status.INTERNAL_SERVER_ERROR).build();
                 return new ProcessingResult(response, null);
             }
 
-            final BomUploadEvent bomUploadEvent = new BomUploadEvent(qm.detach(Project.class, project.getId()), bomFileMetadata);
+            final BomUploadEvent bomUploadEvent = new BomUploadEvent(qm.detach(Project.class, project.getId()),
+                    bomFileMetadata);
             qm.createWorkflowSteps(bomUploadEvent.getChainIdentifier());
 
             BomUploadResponse bomUploadResponse = new BomUploadResponse();
@@ -642,7 +613,8 @@ public class BomResource extends AbstractApiResource {
 
             return new ProcessingResult(response, bomUploadEvent);
         } else {
-            final var response = Response.status(Response.Status.NOT_FOUND).entity("The project could not be found.").build();
+            final var response = Response.status(Response.Status.NOT_FOUND).entity("The project could not be found.")
+                    .build();
             return new ProcessingResult(response, null);
         }
     }
@@ -658,17 +630,20 @@ public class BomResource extends AbstractApiResource {
 
                 final FileMetadata bomFileMetadata;
                 try (final var inputStream = bodyPartEntity.getInputStream();
-                     final var byteOrderMarkInputStream = new BOMInputStream(inputStream)) {
-                    bomFileMetadata = validateAndStoreBom(IOUtils.toByteArray(byteOrderMarkInputStream), project, artifactPart.getMediaType());
+                        final var byteOrderMarkInputStream = new BOMInputStream(inputStream)) {
+                    bomFileMetadata = validateAndStoreBom(IOUtils.toByteArray(byteOrderMarkInputStream), project,
+                            artifactPart.getMediaType());
                 } catch (IOException e) {
-                    LOGGER.error("An unexpected error occurred while validating or storing a BOM uploaded to project: " + project.getUuid(), e);
+                    LOGGER.error("An unexpected error occurred while validating or storing a BOM uploaded to project: "
+                            + project.getUuid(), e);
                     final var response = Response.status(Response.Status.INTERNAL_SERVER_ERROR).build();
                     return new ProcessingResult(response, null);
                 }
 
                 // todo: make option to combine all the bom data so components are reconciled in a single pass.
                 // todo: https://github.com/DependencyTrack/dependency-track/issues/130
-                final BomUploadEvent bomUploadEvent = new BomUploadEvent(qm.detach(Project.class, project.getId()), bomFileMetadata);
+                final BomUploadEvent bomUploadEvent = new BomUploadEvent(qm.detach(Project.class, project.getId()),
+                        bomFileMetadata);
 
                 qm.createWorkflowSteps(bomUploadEvent.getChainIdentifier());
 
@@ -678,7 +653,8 @@ public class BomResource extends AbstractApiResource {
 
                 return new ProcessingResult(response, bomUploadEvent);
             } else {
-                final var response = Response.status(Response.Status.NOT_FOUND).entity("The project could not be found.").build();
+                final var response = Response.status(Response.Status.NOT_FOUND)
+                        .entity("The project could not be found.").build();
                 return new ProcessingResult(response, null);
             }
         }
@@ -689,17 +665,19 @@ public class BomResource extends AbstractApiResource {
         return validateAndStoreBom(bomBytes, project, null);
     }
 
-    private FileMetadata validateAndStoreBom(final byte[] bomBytes, final Project project, MediaType mediaType) throws IOException {
+    private FileMetadata validateAndStoreBom(final byte[] bomBytes, final Project project, MediaType mediaType)
+            throws IOException {
         validate(bomBytes, project, mediaType);
 
         // TODO: Provide mediaType to FileStorage#store. Should be any of:
-        //   * application/vnd.cyclonedx+json
-        //   * application/vnd.cyclonedx+xml
-        //   * application/x.vnd.cyclonedx+protobuf
-        //  Consider also attaching the detected version, i.e. application/vnd.cyclonedx+xml; version=1.6
-        //  See https://cyclonedx.org/specification/overview/ -> Media Types.
+        // * application/vnd.cyclonedx+json
+        // * application/vnd.cyclonedx+xml
+        // * application/x.vnd.cyclonedx+protobuf
+        // Consider also attaching the detected version, i.e. application/vnd.cyclonedx+xml; version=1.6
+        // See https://cyclonedx.org/specification/overview/ -> Media Types.
         try (final var fileStorage = PluginManager.getInstance().getExtension(FileStorage.class)) {
-            return fileStorage.store("bom-upload/%s_%s".formatted(Instant.now().toEpochMilli(), project.getUuid()), bomBytes);
+            return fileStorage.store("bom-upload/%s_%s".formatted(Instant.now().toEpochMilli(), project.getUuid()),
+                    bomBytes);
         }
     }
 
@@ -748,8 +726,7 @@ public class BomResource extends AbstractApiResource {
         try (final var qm = new QueryManager()) {
             final ConfigProperty validationModeProperty = qm.getConfigProperty(
                     BOM_VALIDATION_MODE.getGroupName(),
-                    BOM_VALIDATION_MODE.getPropertyName()
-            );
+                    BOM_VALIDATION_MODE.getPropertyName());
 
             var validationMode = BomValidationMode.valueOf(BOM_VALIDATION_MODE.getDefaultPropertyValue());
             try {
@@ -778,8 +755,7 @@ public class BomResource extends AbstractApiResource {
                     : BOM_VALIDATION_TAGS_EXCLUSIVE;
             final ConfigProperty tagsProperty = qm.getConfigProperty(
                     tagsPropertyConstant.getGroupName(),
-                    tagsPropertyConstant.getPropertyName()
-            );
+                    tagsPropertyConstant.getPropertyName());
 
             final Set<String> validationModeTags;
             try {
@@ -796,7 +772,7 @@ public class BomResource extends AbstractApiResource {
                     .map(org.dependencytrack.model.Tag::getName)
                     .anyMatch(validationModeTags::contains);
             return (validationMode == BomValidationMode.ENABLED_FOR_TAGS && doTagsMatch)
-                   || (validationMode == BomValidationMode.DISABLED_FOR_TAGS && !doTagsMatch);
+                    || (validationMode == BomValidationMode.DISABLED_FOR_TAGS && !doTagsMatch);
         }
     }
 
