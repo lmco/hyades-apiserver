@@ -22,15 +22,17 @@ import alpine.model.IConfigProperty;
 import alpine.test.config.ConfigPropertyRule;
 import alpine.test.config.WithConfigProperty;
 import org.dependencytrack.PersistenceCapableTest;
+import org.dependencytrack.datasource.vuln.github.GitHubVulnDataSourcePlugin;
+import org.dependencytrack.datasource.vuln.nvd.NvdVulnDataSourcePlugin;
 import org.dependencytrack.filestorage.FileStoragePlugin;
 import org.dependencytrack.plugin.api.ExtensionFactory;
 import org.dependencytrack.plugin.api.ExtensionPoint;
 import org.dependencytrack.plugin.api.Plugin;
+import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 
-import java.util.List;
-import java.util.SortedSet;
+import java.util.SequencedCollection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
@@ -43,12 +45,23 @@ public class PluginManagerTest extends PersistenceCapableTest {
     @Rule
     public final ConfigPropertyRule configPropertyRule = new ConfigPropertyRule();
 
+    @Before
+    @Override
+    public void before() throws Exception {
+        super.before();
+
+        PluginManagerTestUtil.loadPlugins();
+    }
+
     @Test
     public void testGetLoadedPlugins() {
-        final List<Plugin> loadedPlugins = PluginManager.getInstance().getLoadedPlugins();
+        final SequencedCollection<Plugin> loadedPlugins =
+                PluginManager.getInstance().getLoadedPlugins();
         assertThat(loadedPlugins).satisfiesExactlyInAnyOrder(
                 plugin -> assertThat(plugin).isOfAnyClassIn(DummyPlugin.class),
-                plugin -> assertThat(plugin).isInstanceOf(FileStoragePlugin.class));
+                plugin -> assertThat(plugin).isInstanceOf(FileStoragePlugin.class),
+                plugin -> assertThat(plugin).isInstanceOf(GitHubVulnDataSourcePlugin.class),
+                plugin -> assertThat(plugin).isInstanceOf(NvdVulnDataSourcePlugin.class));
         assertThat(loadedPlugins).isUnmodifiable();
     }
 
@@ -120,7 +133,7 @@ public class PluginManagerTest extends PersistenceCapableTest {
 
     @Test
     public void testGetFactories() {
-        final SortedSet<ExtensionFactory<TestExtensionPoint>> factories =
+        final SequencedCollection<ExtensionFactory<TestExtensionPoint>> factories =
                 PluginManager.getInstance().getFactories(TestExtensionPoint.class);
         assertThat(factories).satisfiesExactly(factory ->
                 assertThat(factory).isExactlyInstanceOf(DummyTestExtensionFactory.class));
@@ -128,7 +141,7 @@ public class PluginManagerTest extends PersistenceCapableTest {
 
     @Test
     public void testGetFactoriesForUnknownExtensionPoint() {
-        final SortedSet<ExtensionFactory<UnknownExtensionPoint>> factories =
+        final SequencedCollection<ExtensionFactory<UnknownExtensionPoint>> factories =
                 PluginManager.getInstance().getFactories(UnknownExtensionPoint.class);
         assertThat(factories).isEmpty();
     }

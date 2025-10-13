@@ -18,6 +18,7 @@
  */
 package org.dependencytrack.plugin.api.config;
 
+import java.net.URL;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
@@ -33,6 +34,7 @@ public final class ConfigTypes {
     public static final ConfigType<Integer> INTEGER = new ConfigType.Integer();
     public static final ConfigType<Path> PATH = new ConfigType.Path();
     public static final ConfigType<String> STRING = new ConfigType.String();
+    public static final ConfigType<URL> URL = new ConfigType.URL();
 
     private ConfigTypes() {
     }
