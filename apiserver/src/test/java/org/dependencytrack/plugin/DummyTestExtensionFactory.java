@@ -18,6 +18,7 @@
  */
 package org.dependencytrack.plugin;
 
+import org.dependencytrack.plugin.api.ExtensionContext;
 import org.dependencytrack.plugin.api.ExtensionFactory;
 import org.dependencytrack.plugin.api.config.ConfigDefinition;
 import org.dependencytrack.plugin.api.config.ConfigRegistry;
@@ -28,7 +29,7 @@ import org.dependencytrack.plugin.api.config.RuntimeConfigDefinition;
 public class DummyTestExtensionFactory implements ExtensionFactory<TestExtensionPoint> {
 
     private static final ConfigDefinition<String> CONFIG_FOO =
-            new RuntimeConfigDefinition<>("foo", "description", ConfigTypes.STRING, false, false);
+            new RuntimeConfigDefinition<>("foo", "description", ConfigTypes.STRING, null, false, false);
     private static final ConfigDefinition<String> CONFIG_BAR =
             new DeploymentConfigDefinition<>("bar", ConfigTypes.STRING, false);
 
@@ -50,8 +51,8 @@ public class DummyTestExtensionFactory implements ExtensionFactory<TestExtension
     }
 
     @Override
-    public void init(final ConfigRegistry configRegistry) {
-        this.configRegistry = configRegistry;
+    public void init(final ExtensionContext ctx) {
+        this.configRegistry = ctx.configRegistry();
     }
 
     @Override

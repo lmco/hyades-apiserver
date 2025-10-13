@@ -25,8 +25,6 @@ import org.apache.kafka.clients.producer.RecordMetadata;
 import org.apache.kafka.common.serialization.ByteArraySerializer;
 import org.dependencytrack.event.ComponentRepositoryMetaAnalysisEvent;
 import org.dependencytrack.event.ComponentVulnerabilityAnalysisEvent;
-import org.dependencytrack.event.GitHubAdvisoryMirrorEvent;
-import org.dependencytrack.event.NistMirrorEvent;
 import org.dependencytrack.event.OsvMirrorEvent;
 import org.dependencytrack.event.PortfolioMetricsUpdateEvent;
 import org.dependencytrack.model.Project;
@@ -106,34 +104,6 @@ public class KafkaEventDispatcherTest {
     }
 
     @Test
-    public void testDispatchEventWithGitHubAdvisoryMirrorEvent() {
-        final CompletableFuture<RecordMetadata> future = eventDispatcher.dispatchEvent(new GitHubAdvisoryMirrorEvent());
-        assertThat(mockProducer.completeNext()).isTrue();
-        assertThat(future).isCompletedWithValueMatching(Objects::nonNull);
-
-        assertThat(mockProducer.history()).satisfiesExactly(record -> {
-            assertThat(record.topic()).isEqualTo(KafkaTopics.VULNERABILITY_MIRROR_COMMAND.name());
-            assertThat(record.key()).asString().isEqualTo("GITHUB");
-            assertThat(record.value()).isNull();
-            assertThat(record.headers()).isEmpty();
-        });
-    }
-
-    @Test
-    public void testDispatchEventWithNistMirrorEvent() {
-        final CompletableFuture<RecordMetadata> future = eventDispatcher.dispatchEvent(new NistMirrorEvent());
-        assertThat(mockProducer.completeNext()).isTrue();
-        assertThat(future).isCompletedWithValueMatching(Objects::nonNull);
-
-        assertThat(mockProducer.history()).satisfiesExactly(record -> {
-            assertThat(record.topic()).isEqualTo(KafkaTopics.VULNERABILITY_MIRROR_COMMAND.name());
-            assertThat(record.key()).asString().isEqualTo("NVD");
-            assertThat(record.value()).isNull();
-            assertThat(record.headers()).isEmpty();
-        });
-    }
-
-    @Test
     public void testDispatchEventWithOsvMirrorEvent() {
         final CompletableFuture<RecordMetadata> future = eventDispatcher.dispatchEvent(new OsvMirrorEvent("Maven"));
         assertThat(mockProducer.completeNext()).isTrue();
@@ -156,7 +126,7 @@ public class KafkaEventDispatcherTest {
 
     @Test
     public void testDispatchEventWithException() {
-        final CompletableFuture<RecordMetadata> future = eventDispatcher.dispatchEvent(new NistMirrorEvent());
+        final CompletableFuture<RecordMetadata> future = eventDispatcher.dispatchEvent(new OsvMirrorEvent("Maven"));
         assertThat(mockProducer.errorNext(new IllegalStateException())).isTrue();
         assertThat(future).isCompletedExceptionally();
     }

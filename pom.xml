@@ -34,6 +34,8 @@
         <module>alpine</module>
         <module>proto</module>
         <module>plugin/api</module>
+        <module>plugin/vuln-data-source-github</module>
+        <module>plugin/vuln-data-source-nvd</module>
         <module>persistence-migration</module>
         <module>persistence-jooq</module>
         <module>apiserver</module>
@@ -95,27 +97,34 @@
         <project.parentBaseDir>.</project.parentBaseDir>
 
         <!-- Dependency versions -->
-        <lib.assertj.version>3.27.4</lib.assertj.version>
+        <lib.assertj.version>3.27.6</lib.assertj.version>
         <lib.cel-java.version>0.5.3</lib.cel-java.version>
+        <lib.cpe-parser.version>3.0.0</lib.cpe-parser.version>
+        <lib.cvss-calculator.version>1.4.3</lib.cvss-calculator.version>
         <lib.datanucleus-api-jdo.version>6.0.5</lib.datanucleus-api-jdo.version>
         <lib.datanucleus-core.version>6.0.11</lib.datanucleus-core.version>
         <lib.datanucleus-javax-jdo.version>3.2.1</lib.datanucleus-javax-jdo.version>
         <lib.datanucleus-rdbms.version>6.0.10</lib.datanucleus-rdbms.version>
+        <lib.httpclient5.version>5.5.1</lib.httpclient5.version>
         <lib.jakarta-ee.version>10.0.0</lib.jakarta-ee.version>
-        <lib.java-uuid-generator.version>5.1.0</lib.java-uuid-generator.version>
+        <lib.java-uuid-generator.version>5.1.1</lib.java-uuid-generator.version>
         <lib.jackson.version>2.20.0</lib.jackson.version>
         <lib.jdbi.version>3.49.5</lib.jdbi.version>
         <lib.jersey.version>3.1.11</lib.jersey.version>
-        <lib.jetty.version>12.1.0</lib.jetty.version>
-        <lib.jooq.version>3.20.6</lib.jooq.version>
+        <lib.jetty.version>12.1.1</lib.jetty.version>
+        <lib.jooq.version>3.20.8</lib.jooq.version>
+        <lib.json-unit.version>4.1.1</lib.json-unit.version>
         <lib.junit4.version>4.13.2</lib.junit4.version>
-        <lib.junit-jupiter.version>5.13.4</lib.junit-jupiter.version>
+        <lib.junit-jupiter.version>6.0.0</lib.junit-jupiter.version>
         <lib.liquibase.version>4.33.0</lib.liquibase.version>
-        <lib.postgresql.version>42.7.7</lib.postgresql.version>
-        <lib.protobuf-java.version>4.32.0</lib.protobuf-java.version>
+        <lib.mockito.version>5.20.0</lib.mockito.version>
+        <lib.open-vulnerability-clients.version>9.0.1</lib.open-vulnerability-clients.version>
+        <lib.postgresql.version>42.7.8</lib.postgresql.version>
+        <lib.protobuf-java.version>4.32.1</lib.protobuf-java.version>
         <lib.slf4j.version>2.0.17</lib.slf4j.version>
-        <lib.smallrye-config.version>3.13.4</lib.smallrye-config.version>
+        <lib.smallrye-config.version>3.14.1</lib.smallrye-config.version>
         <lib.testcontainers.version>1.21.3</lib.testcontainers.version>
+        <lib.versatile.version>0.7.0</lib.versatile.version>
         <!-- Number of JVM processes to use for unit test parallelization -->
         <unitTestForkCount>2</unitTestForkCount>
 
@@ -140,6 +149,18 @@
             </dependency>
 
             <dependency>
+                <groupId>us.springett</groupId>
+                <artifactId>cpe-parser</artifactId>
+                <version>${lib.cpe-parser.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>us.springett</groupId>
+                <artifactId>cvss-calculator</artifactId>
+                <version>${lib.cvss-calculator.version}</version>
+            </dependency>
+
+            <dependency>
                 <groupId>org.datanucleus</groupId>
                 <artifactId>datanucleus-api-jdo</artifactId>
                 <version>${lib.datanucleus-api-jdo.version}</version>
@@ -158,6 +179,12 @@
                 <groupId>org.datanucleus</groupId>
                 <artifactId>datanucleus-rdbms</artifactId>
                 <version>${lib.datanucleus-rdbms.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.httpcomponents.client5</groupId>
+                <artifactId>httpclient5</artifactId>
+                <version>${lib.httpclient5.version}</version>
             </dependency>
 
             <dependency>
@@ -220,6 +247,12 @@
             </dependency>
 
             <dependency>
+                <groupId>net.javacrumbs.json-unit</groupId>
+                <artifactId>json-unit-assertj</artifactId>
+                <version>${lib.json-unit.version}</version>
+            </dependency>
+
+            <dependency>
                 <groupId>junit</groupId>
                 <artifactId>junit</artifactId>
                 <version>${lib.junit4.version}</version>
@@ -237,6 +270,20 @@
                 <groupId>org.liquibase</groupId>
                 <artifactId>liquibase-core</artifactId>
                 <version>${lib.liquibase.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-bom</artifactId>
+                <version>${lib.mockito.version}</version>
+                <scope>import</scope>
+                <type>pom</type>
+            </dependency>
+
+            <dependency>
+                <groupId>io.github.jeremylong</groupId>
+                <artifactId>open-vulnerability-clients</artifactId>
+                <version>${lib.open-vulnerability-clients.version}</version>
             </dependency>
 
             <dependency>
@@ -266,6 +313,11 @@
                 <artifactId>slf4j-nop</artifactId>
                 <version>${lib.slf4j.version}</version>
             </dependency>
+            <dependency>
+                <groupId>org.slf4j</groupId>
+                <artifactId>slf4j-simple</artifactId>
+                <version>${lib.slf4j.version}</version>
+            </dependency>
 
             <dependency>
                 <groupId>io.smallrye.config</groupId>
@@ -281,6 +333,12 @@
                 <version>${lib.testcontainers.version}</version>
                 <scope>import</scope>
                 <type>pom</type>
+            </dependency>
+
+            <dependency>
+                <groupId>io.github.nscuro</groupId>
+                <artifactId>versatile</artifactId>
+                <version>${lib.versatile.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
@@ -299,7 +357,7 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
-                    <version>3.14.0</version>
+                    <version>3.14.1</version>
                     <configuration>
                         <source>21</source>
                         <target>21</target>
@@ -320,7 +378,7 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.5.3</version>
+                    <version>3.5.4</version>
                     <configuration>
                         <argLine>
                             @{argLine}
@@ -384,7 +442,7 @@
                     <dependency>
                         <groupId>com.puppycrawl.tools</groupId>
                         <artifactId>checkstyle</artifactId>
-                        <version>11.0.0</version>
+                        <version>12.0.0</version>
                     </dependency>
                 </dependencies>
             </plugin>

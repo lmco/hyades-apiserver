@@ -16,20 +16,28 @@
  * SPDX-License-Identifier: Apache-2.0
  * Copyright (c) OWASP Foundation. All Rights Reserved.
  */
-package org.dependencytrack.parser.dependencytrack;
+package org.dependencytrack.plugin.api.datasource.vuln;
 
-import org.dependencytrack.model.Epss;
-import org.dependencytrack.proto.mirror.v1.EpssItem;
+import org.dependencytrack.plugin.api.ExtensionPointSpec;
 
-import java.math.BigDecimal;
+/**
+ * @since 5.7.0
+ */
+public class VulnDataSourceSpec implements ExtensionPointSpec<VulnDataSource> {
 
-public final class EpssModelConverter {
-
-    public static Epss convert(final EpssItem epssItem) {
-        final Epss epss = new Epss();
-        epss.setCve(epssItem.getCve());
-        epss.setScore(BigDecimal.valueOf(epssItem.getEpss()));
-        epss.setPercentile(BigDecimal.valueOf(epssItem.getPercentile()));
-        return epss;
+    @Override
+    public String name() {
+        return "vuln.datasource";
     }
+
+    @Override
+    public boolean required() {
+        return false;
+    }
+
+    @Override
+    public Class<VulnDataSource> extensionPointClass() {
+        return VulnDataSource.class;
+    }
+
 }

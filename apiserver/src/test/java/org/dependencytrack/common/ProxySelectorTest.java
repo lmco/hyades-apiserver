@@ -16,24 +16,29 @@
  * SPDX-License-Identifier: Apache-2.0
  * Copyright (c) OWASP Foundation. All Rights Reserved.
  */
-package org.dependencytrack.parser.dependencytrack;
+package org.dependencytrack.common;
 
-import org.dependencytrack.PersistenceCapableTest;
-import org.dependencytrack.model.Epss;
-import org.dependencytrack.proto.mirror.v1.EpssItem;
+import alpine.common.util.ProxyConfig;
 import org.junit.Test;
+
+import java.net.Proxy;
+import java.net.URI;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-public class EpssModelConverterTest extends PersistenceCapableTest {
+public class ProxySelectorTest {
 
     @Test
-    public void testConvert() {
-        final var epssItemInput = EpssItem.newBuilder().setCve("CVE-111")
-                .setEpss(2.2).setPercentile(3.3).build();
-        final Epss epssConverted = EpssModelConverter.convert(epssItemInput);
-        assertThat(epssConverted.getCve()).isEqualTo("CVE-111");
-        assertThat(epssConverted.getScore()).isEqualByComparingTo("2.2");
-        assertThat(epssConverted.getPercentile()).isEqualByComparingTo("3.3");
+    public void testSelect() {
+        final var proxyConfig = new ProxyConfig();
+        proxyConfig.setHost("example.com");
+        proxyConfig.setPort(6666);
+        proxyConfig.setNoProxy(Set.of("subdomain.example.com"));
+
+        final var proxySelector = new ProxySelector(proxyConfig);
+        assertThat(proxySelector.select(URI.create("https://subdomain.example.com"))).containsOnly(Proxy.NO_PROXY);
+        assertThat(proxySelector.select(URI.create("https://foo.example.com"))).containsOnly(proxyConfig.getProxy());
     }
+
 }
