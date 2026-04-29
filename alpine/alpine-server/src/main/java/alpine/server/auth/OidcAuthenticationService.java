@@ -19,13 +19,15 @@
 
 package alpine.server.auth;
 
-import alpine.Config;
-import alpine.common.logging.Logger;
+import alpine.config.AlpineConfigKeys;
 import alpine.model.OidcUser;
 import alpine.persistence.AlpineQueryManager;
 import alpine.server.util.OidcUtil;
-
 import jakarta.annotation.Nonnull;
+import org.eclipse.microprofile.config.Config;
+import org.eclipse.microprofile.config.ConfigProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.security.Principal;
 import java.util.List;
@@ -37,7 +39,7 @@ import java.util.ServiceLoader;
  */
 public class OidcAuthenticationService implements AuthenticationService {
 
-    private static final Logger LOGGER = Logger.getLogger(OidcAuthenticationService.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(OidcAuthenticationService.class);
 
     private final Config config;
     private final OidcConfiguration oidcConfiguration;
@@ -53,7 +55,7 @@ public class OidcAuthenticationService implements AuthenticationService {
      */
     @Deprecated
     public OidcAuthenticationService(final String accessToken) {
-        this(Config.getInstance(), OidcConfigurationResolver.getInstance().resolve(), null, accessToken);
+        this(ConfigProvider.getConfig(), OidcConfigurationResolver.getInstance().resolve(), null, accessToken);
     }
 
     /**
@@ -62,14 +64,14 @@ public class OidcAuthenticationService implements AuthenticationService {
      * @since 1.10.0
      */
     public OidcAuthenticationService(final String idToken, final String accessToken) {
-        this(Config.getInstance(), OidcConfigurationResolver.getInstance().resolve(), idToken, accessToken);
+        this(ConfigProvider.getConfig(), OidcConfigurationResolver.getInstance().resolve(), idToken, accessToken);
     }
 
     /**
      * Constructor for unit tests
      */
     OidcAuthenticationService(final Config config, final OidcConfiguration oidcConfiguration, final String idToken, final String accessToken) {
-        this(config, oidcConfiguration, new OidcIdTokenAuthenticator(oidcConfiguration, config.getProperty(Config.AlpineKey.OIDC_CLIENT_ID)), new OidcUserInfoAuthenticator(oidcConfiguration), idToken, accessToken);
+        this(config, oidcConfiguration, new OidcIdTokenAuthenticator(oidcConfiguration, config.getOptionalValue(AlpineConfigKeys.OIDC_CLIENT_ID, String.class).orElse(null)), new OidcUserInfoAuthenticator(oidcConfiguration), idToken, accessToken);
     }
 
     /**
@@ -90,7 +92,7 @@ public class OidcAuthenticationService implements AuthenticationService {
         this.idToken = idToken;
         this.accessToken = accessToken;
 
-        String customizerClassName = Config.getInstance().getProperty(Config.AlpineKey.OIDC_AUTH_CUSTOMIZER);
+        final String customizerClassName = config.getValue(AlpineConfigKeys.OIDC_AUTH_CUSTOMIZER, String.class);
         this.customizer = ServiceLoader.load(OidcAuthenticationCustomizer.class)
                 .stream()
                 .filter(provider -> provider.type().getName().equals(customizerClassName))
@@ -123,14 +125,14 @@ public class OidcAuthenticationService implements AuthenticationService {
     @Nonnull
     @Override
     public Principal authenticate() throws AlpineAuthenticationException {
-        final String usernameClaimName = config.getProperty(Config.AlpineKey.OIDC_USERNAME_CLAIM);
+        final String usernameClaimName = config.getOptionalValue(AlpineConfigKeys.OIDC_USERNAME_CLAIM, String.class).orElse(null);
         if (usernameClaimName == null) {
             LOGGER.error("No username claim has been configured");
             throw new AlpineAuthenticationException(AlpineAuthenticationException.CauseType.OTHER);
         }
 
-        final boolean teamSyncEnabled = config.getPropertyAsBoolean(Config.AlpineKey.OIDC_TEAM_SYNCHRONIZATION);
-        final String teamsClaimName = config.getProperty(Config.AlpineKey.OIDC_TEAMS_CLAIM);
+        final boolean teamSyncEnabled = config.getValue(AlpineConfigKeys.OIDC_TEAM_SYNCHRONIZATION, Boolean.class);
+        final String teamsClaimName = config.getOptionalValue(AlpineConfigKeys.OIDC_TEAMS_CLAIM, String.class).orElse(null);
         if (teamSyncEnabled && teamsClaimName == null) {
             LOGGER.error("Team synchronization is enabled, but no teams claim has been configured");
             throw new AlpineAuthenticationException(AlpineAuthenticationException.CauseType.OTHER);
@@ -141,7 +143,7 @@ public class OidcAuthenticationService implements AuthenticationService {
         OidcProfile idTokenProfile = null;
         if (idToken != null) {
             idTokenProfile = idTokenAuthenticator.authenticate(idToken, profileCreator);
-            LOGGER.debug("ID token profile: " + idTokenProfile);
+            LOGGER.debug("ID token profile: {}", idTokenProfile);
 
             if (customizer.isProfileComplete(idTokenProfile, teamSyncEnabled)) {
                 LOGGER.debug("ID token profile is complete, proceeding to authenticate");
@@ -152,7 +154,7 @@ public class OidcAuthenticationService implements AuthenticationService {
         OidcProfile userInfoProfile = null;
         if (accessToken != null) {
             userInfoProfile = userInfoAuthenticator.authenticate(accessToken, profileCreator);
-            LOGGER.debug("UserInfo profile: " + userInfoProfile);
+            LOGGER.debug("UserInfo profile: {}", userInfoProfile);
 
             if (customizer.isProfileComplete(userInfoProfile, teamSyncEnabled)) {
                 LOGGER.debug("UserInfo profile is complete, proceeding to authenticate");
@@ -163,7 +165,7 @@ public class OidcAuthenticationService implements AuthenticationService {
         OidcProfile mergedProfile = null;
         if (idTokenProfile != null && userInfoProfile != null) {
             mergedProfile = customizer.mergeProfiles(idTokenProfile, userInfoProfile);
-            LOGGER.debug("Merged profile: " + mergedProfile);
+            LOGGER.debug("Merged profile: {}", mergedProfile);
 
             if (customizer.isProfileComplete(mergedProfile, teamSyncEnabled)) {
                 LOGGER.debug("Merged profile is complete, proceeding to authenticate");
@@ -171,8 +173,7 @@ public class OidcAuthenticationService implements AuthenticationService {
             }
         }
 
-        LOGGER.error("Unable to assemble complete profile (ID token: " + idTokenProfile +
-                ", UserInfo: " + userInfoProfile + ", Merged: " + mergedProfile + ")");
+        LOGGER.error("Unable to assemble complete profile (ID token: {}, UserInfo: {}, Merged: {})", idTokenProfile, userInfoProfile, mergedProfile);
         throw new AlpineAuthenticationException(AlpineAuthenticationException.CauseType.OTHER);
     }
 
@@ -180,26 +181,25 @@ public class OidcAuthenticationService implements AuthenticationService {
         try (final var qm = new AlpineQueryManager()) {
             OidcUser user = qm.getOidcUser(profile.getUsername());
             if (user != null) {
-                LOGGER.debug("Attempting to authenticate user: " + user.getUsername());
+                LOGGER.debug("Attempting to authenticate user: {}", user.getUsername());
                 if (user.getSubjectIdentifier() == null) {
-                    LOGGER.debug("Assigning subject identifier " + profile.getSubject() + " to user " + user.getUsername());
+                    LOGGER.debug("Assigning subject identifier {} to user {}", profile.getSubject(), user.getUsername());
                     user.setSubjectIdentifier(profile.getSubject());
                     user.setEmail(profile.getEmail());
 
                     return customizer.onAuthenticationSuccess(qm.updateOidcUser(user), profile, idToken, accessToken);
                 } else if (!user.getSubjectIdentifier().equals(profile.getSubject())) {
-                    LOGGER.error("Refusing to authenticate user " + user.getUsername() + ": subject identifier has changed (" +
-                            user.getSubjectIdentifier() + " to " + profile.getSubject() + ")");
+                    LOGGER.error("Refusing to authenticate user {}: subject identifier has changed ({} to {})", user.getUsername(), user.getSubjectIdentifier(), profile.getSubject());
                     throw new AlpineAuthenticationException(AlpineAuthenticationException.CauseType.INVALID_CREDENTIALS);
                 }
 
                 if (!Objects.equals(user.getEmail(), profile.getEmail())) {
-                    LOGGER.debug("Updating email of user " + user.getUsername() + ": " + user.getEmail() + " -> " + profile.getEmail());
+                    LOGGER.debug("Updating email of user {}: {} -> {}", user.getUsername(), user.getEmail(), profile.getEmail());
                     user.setEmail(profile.getEmail());
                     user = qm.updateOidcUser(user);
                 }
 
-                if (config.getPropertyAsBoolean(Config.AlpineKey.OIDC_TEAM_SYNCHRONIZATION)) {
+                if (config.getValue(AlpineConfigKeys.OIDC_TEAM_SYNCHRONIZATION, Boolean.class)) {
                     return customizer.onAuthenticationSuccess(
                             qm.synchronizeTeamMembership(user, profile.getGroups()),
                             profile,
@@ -208,11 +208,11 @@ public class OidcAuthenticationService implements AuthenticationService {
                 }
 
                 return customizer.onAuthenticationSuccess(user, profile, idToken, accessToken);
-            } else if (config.getPropertyAsBoolean(Config.AlpineKey.OIDC_USER_PROVISIONING)) {
-                LOGGER.debug("The user (" + profile.getUsername() + ") authenticated successfully but the account has not been provisioned");
+            } else if (config.getValue(AlpineConfigKeys.OIDC_USER_PROVISIONING, Boolean.class)) {
+                LOGGER.debug("The user ({}) authenticated successfully but the account has not been provisioned", profile.getUsername());
                 return autoProvision(qm, profile);
             } else {
-                LOGGER.debug("The user (" + profile.getUsername() + ") is unmapped and user provisioning is not enabled");
+                LOGGER.debug("The user ({}) is unmapped and user provisioning is not enabled", profile.getUsername());
                 throw new AlpineAuthenticationException(AlpineAuthenticationException.CauseType.UNMAPPED_ACCOUNT);
             }
         }
@@ -225,8 +225,8 @@ public class OidcAuthenticationService implements AuthenticationService {
         user.setEmail(profile.getEmail());
         user = qm.persist(user);
 
-        if (config.getPropertyAsBoolean(Config.AlpineKey.OIDC_TEAM_SYNCHRONIZATION)) {
-            LOGGER.debug("Synchronizing teams for user " + user.getUsername());
+        if (config.getValue(AlpineConfigKeys.OIDC_TEAM_SYNCHRONIZATION, Boolean.class)) {
+            LOGGER.debug("Synchronizing teams for user {}", user.getUsername());
             return customizer.onAuthenticationSuccess(
                     qm.synchronizeTeamMembership(user, profile.getGroups()),
                     profile,
@@ -234,7 +234,11 @@ public class OidcAuthenticationService implements AuthenticationService {
                     accessToken);
         }
 
-        final List<String> defaultTeams = config.getPropertyAsList(Config.AlpineKey.OIDC_TEAMS_DEFAULT);
+        final List<String> defaultTeams = config.getOptionalValues(AlpineConfigKeys.OIDC_TEAMS_DEFAULT, String.class)
+                .orElse(List.of()).stream()
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
         if (!defaultTeams.isEmpty()) {
             LOGGER.debug("Assigning default teams %s to user %s".formatted(defaultTeams, user.getUsername()));
             return customizer.onAuthenticationSuccess(

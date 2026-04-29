@@ -24,36 +24,31 @@ import alpine.model.Permission;
 import alpine.model.Team;
 import org.dependencytrack.PersistenceCapableTest;
 import org.dependencytrack.auth.Permissions;
+import org.dependencytrack.common.datasource.DataSourceRegistry;
 import org.dependencytrack.init.InitTaskContext;
 import org.dependencytrack.model.ConfigPropertyConstants;
 import org.dependencytrack.model.DefaultRepository;
 import org.dependencytrack.model.License;
 import org.dependencytrack.model.LicenseGroup;
-import org.dependencytrack.model.NotificationPublisher;
 import org.dependencytrack.model.Repository;
-import org.dependencytrack.model.Role;
-import org.dependencytrack.notification.publisher.DefaultNotificationPublishers;
 import org.eclipse.microprofile.config.ConfigProvider;
-import org.junit.Before;
-import org.junit.Test;
-import org.postgresql.ds.PGSimpleDataSource;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
+import javax.sql.DataSource;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class DatabaseSeedingInitTaskTest extends PersistenceCapableTest {
 
-    private PGSimpleDataSource dataSource;
+    private DataSource dataSource;
 
-    @Before
+    @BeforeEach
     public void before() throws Exception {
         super.before();
 
-        dataSource = new PGSimpleDataSource();
-        dataSource.setUrl(postgresContainer.getJdbcUrl());
-        dataSource.setUser(postgresContainer.getUsername());
-        dataSource.setPassword(postgresContainer.getPassword());
+        dataSource = DataSourceRegistry.getInstance().getDefault();
     }
 
     @Test
@@ -83,14 +78,6 @@ public class DatabaseSeedingInitTaskTest extends PersistenceCapableTest {
             assertThat(team.getName()).isNotBlank();
             assertThat(team.getUuid()).isNotNull();
             assertThat(team.getPermissions()).isNotEmpty();
-        });
-
-        final List<Role> roles = qm.getRoles();
-        assertThat(roles).isNotEmpty();
-        assertThat(roles).allSatisfy(role -> {
-            assertThat(role.getName()).isNotBlank();
-            assertThat(role.getUuid()).isNotNull();
-            assertThat(role.getPermissions()).isNotEmpty();
         });
 
         final List<ManagedUser> users = qm.getManagedUsers();
@@ -126,17 +113,6 @@ public class DatabaseSeedingInitTaskTest extends PersistenceCapableTest {
             assertThat(licenseGroup.getName()).isNotBlank();
             assertThat(licenseGroup.getUuid()).isNotNull();
             assertThat(licenseGroup.getLicenses()).isNotEmpty();
-        });
-
-        final List<NotificationPublisher> notificationPublishers = qm.getAllNotificationPublishers();
-        assertThat(notificationPublishers).hasSize(DefaultNotificationPublishers.values().length);
-        assertThat(notificationPublishers).allSatisfy(notificationPublisher -> {
-            assertThat(notificationPublisher.getName()).isNotBlank();
-            assertThat(notificationPublisher.getPublisherClass()).isNotBlank();
-            assertThat(notificationPublisher.getDescription()).isNotBlank();
-            assertThat(notificationPublisher.getTemplate()).isNotBlank();
-            assertThat(notificationPublisher.getTemplateMimeType()).isNotBlank();
-            assertThat(notificationPublisher.isDefaultPublisher()).isTrue();
         });
 
         final List<Repository> repositories = qm.getRepositories().getList(Repository.class);

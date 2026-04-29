@@ -18,21 +18,20 @@
  */
 package alpine.server;
 
-import alpine.Config;
-import alpine.common.logging.Logger;
-import alpine.security.crypto.KeyManager;
-import org.glassfish.jersey.servlet.ServletContainer;
-import org.owasp.security.logging.util.SecurityUtil;
-
+import alpine.config.AlpineConfigKeys;
 import jakarta.servlet.ServletConfig;
 import jakarta.servlet.ServletException;
+import org.eclipse.microprofile.config.ConfigProvider;
+import org.glassfish.jersey.server.ResourceConfig;
+import org.glassfish.jersey.servlet.ServletContainer;
+import org.owasp.security.logging.util.SecurityUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * The AlpineServlet is the main servlet which extends
  * the Jersey ServletContainer. It is responsible for setting up
- * the runtime environment by initializing the application,
- * and setting the path to properties files used for
- * {@link Config Config}(uration).
+ * the runtime environment by initializing the application.
  *
  * @author Steve Springett
  * @since 1.0.0
@@ -40,34 +39,29 @@ import jakarta.servlet.ServletException;
 public class AlpineServlet extends ServletContainer {
 
     private static final long serialVersionUID = -133386507668410112L;
-    private static final Logger LOGGER = Logger.getLogger(AlpineServlet.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(AlpineServlet.class);
 
-    /**
-     * Overrides the servlet init method and loads sets the InputStream necessary
-     * to load application.properties.
-     *
-     * @throws ServletException a general error that occurs during initialization
-     */
-    @Override
-    public void init(ServletConfig config) throws ServletException {
-        LOGGER.info("Starting " + Config.getInstance().getApplicationName());
-        super.init(config);
-
-        // Initializes the KeyManager
-        KeyManager.getInstance();
-
-        // Log all Java System Properties
-        SecurityUtil.logJavaSystemProperties();
-
-        LOGGER.info(Config.getInstance().getApplicationName() + " is ready");
+    public AlpineServlet() {
     }
 
-    /**
-     * Overrides the servlet destroy method and shuts down the servlet.
-     */
+    public AlpineServlet(ResourceConfig resourceConfig) {
+        super(resourceConfig);
+    }
+
+    @Override
+    public void init(ServletConfig config) throws ServletException {
+        final String appName = ConfigProvider.getConfig().getValue(AlpineConfigKeys.BUILD_INFO_APPLICATION_NAME, String.class);
+        LOGGER.info("Starting {}", appName);
+        super.init(config);
+
+        SecurityUtil.logJavaSystemProperties();
+
+        LOGGER.info("{} is ready", appName);
+    }
+
     @Override
     public void destroy() {
-        LOGGER.info("Stopping " + Config.getInstance().getApplicationName());
+        LOGGER.info("Stopping {}", ConfigProvider.getConfig().getValue(AlpineConfigKeys.BUILD_INFO_APPLICATION_NAME, String.class));
         super.destroy();
     }
 

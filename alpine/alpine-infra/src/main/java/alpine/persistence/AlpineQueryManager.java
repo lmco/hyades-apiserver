@@ -18,14 +18,10 @@
  */
 package alpine.persistence;
 
-import alpine.common.logging.Logger;
 import alpine.event.LdapSyncEvent;
 import alpine.event.framework.EventService;
-import alpine.event.framework.LoggableSubscriber;
-import alpine.event.framework.Subscriber;
 import alpine.model.ApiKey;
 import alpine.model.ConfigProperty;
-import alpine.model.EventServiceLog;
 import alpine.model.LdapUser;
 import alpine.model.ManagedUser;
 import alpine.model.MappedLdapGroup;
@@ -35,14 +31,16 @@ import alpine.model.OidcUser;
 import alpine.model.Permission;
 import alpine.model.Team;
 import alpine.model.User;
+import alpine.model.UserSession;
 import alpine.resources.AlpineRequest;
 import alpine.security.ApiKeyGenerator;
 import org.datanucleus.store.rdbms.query.JDOQLQuery;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.jdo.PersistenceManager;
 import javax.jdo.Query;
 import java.security.Principal;
-import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
@@ -60,7 +58,7 @@ import java.util.Set;
  */
 public class AlpineQueryManager extends AbstractAlpineQueryManager {
 
-    private static final Logger LOGGER = Logger.getLogger(AlpineQueryManager.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(AlpineQueryManager.class);
 
     /**
      * Default constructor.
@@ -274,41 +272,41 @@ public class AlpineQueryManager extends AbstractAlpineQueryManager {
      * @since 1.8.0
      */
     public OidcUser synchronizeTeamMembership(final OidcUser user, final List<String> groupNames) {
-        LOGGER.debug("Synchronizing team membership for OpenID Connect user " + user.getUsername());
+        LOGGER.debug("Synchronizing team membership for OpenID Connect user {}", user.getUsername());
         return callInTransaction(() -> {
             final List<Team> removeThese = new ArrayList<>();
             if (user.getTeams() != null) {
                 for (final Team team : user.getTeams()) {
-                    LOGGER.debug(user.getUsername() + " is a member of team: " + team.getName());
+                    LOGGER.debug("{} is a member of team: {}", user.getUsername(), team.getName());
                     if (team.getMappedOidcGroups() != null && !team.getMappedOidcGroups().isEmpty()) {
                         for (final MappedOidcGroup mappedOidcGroup : team.getMappedOidcGroups()) {
-                            LOGGER.debug(mappedOidcGroup.getGroup().getName() + " is mapped to team: " + team.getName());
+                            LOGGER.debug("{} is mapped to team: {}", mappedOidcGroup.getGroup().getName(), team.getName());
                             if (!groupNames.contains(mappedOidcGroup.getGroup().getName())) {
-                                LOGGER.debug(mappedOidcGroup.getGroup().getName() + " is not identified in the List of groups specified. Queuing removal of membership for user " + user.getUsername());
+                                LOGGER.debug("{} is not identified in the List of groups specified. Queuing removal of membership for user {}", mappedOidcGroup.getGroup().getName(), user.getUsername());
                                 removeThese.add(team);
                             }
                         }
                     } else {
-                        LOGGER.debug(team.getName() + " does not have any mapped OpenID Connect groups. Queuing removal of " + user.getUsername() + " from team: " + team.getName());
+                        LOGGER.debug("{} does not have any mapped OpenID Connect groups. Queuing removal of {} from team: {}", team.getName(), user.getUsername(), team.getName());
                         removeThese.add(team);
                     }
                 }
             }
 
             for (final Team team : removeThese) {
-                LOGGER.debug("Removing user: " + user.getUsername() + " from team: " + team.getName());
+                LOGGER.debug("Removing user: {} from team: {}", user.getUsername(), team.getName());
                 removeUserFromTeam(user, team);
             }
 
             for (final String groupName : groupNames) {
                 final OidcGroup group = getOidcGroup(groupName);
                 if (group == null) {
-                    LOGGER.debug("Unknown OpenID Connect group " + groupName);
+                    LOGGER.debug("Unknown OpenID Connect group {}", groupName);
                     continue;
                 }
 
                 for (final MappedOidcGroup mappedOidcGroup : getMappedOidcGroups(group)) {
-                    LOGGER.debug("Adding user: " + user.getUsername() + " to team: " + mappedOidcGroup.getTeam().getName());
+                    LOGGER.debug("Adding user: {} to team: {}", user.getUsername(), mappedOidcGroup.getTeam().getName());
                     addUserToTeam(user, mappedOidcGroup.getTeam());
                 }
             }
@@ -326,15 +324,15 @@ public class AlpineQueryManager extends AbstractAlpineQueryManager {
      * @since 2.2.5
      */
     public OidcUser addUserToTeams(final OidcUser user, final List<String> teamNames) {
-        LOGGER.debug("Synchronizing team membership for OpenID Connect user " + user.getUsername());
+        LOGGER.debug("Synchronizing team membership for OpenID Connect user {}", user.getUsername());
 
         return callInTransaction(() -> {
             for (final String teamName : teamNames) {
                 Team team = getTeam(teamName);
                 if (team == null) {
-                    LOGGER.warn("Cannot add user " + user.getUsername() + " to team " + teamName + ", because no team with that name exists");
+                    LOGGER.warn("Cannot add user {} to team {}, because no team with that name exists", user.getUsername(), teamName);
                 } else {
-                    LOGGER.debug("Adding user: " + user.getUsername() + " to team: " + teamName);
+                    LOGGER.debug("Adding user: {} to team: {}", user.getUsername(), teamName);
                     addUserToTeam(user, team);
                 }
             }
@@ -409,33 +407,33 @@ public class AlpineQueryManager extends AbstractAlpineQueryManager {
      * @since 1.4.0
      */
     public LdapUser synchronizeTeamMembership(final LdapUser user, final List<String> groupDNs) {
-        LOGGER.debug("Synchronizing team membership for " + user.getUsername());
+        LOGGER.debug("Synchronizing team membership for {}", user.getUsername());
         return callInTransaction(() -> {
             final List<Team> removeThese = new ArrayList<>();
             if (user.getTeams() != null) {
                 for (final Team team : user.getTeams()) {
-                    LOGGER.debug(user.getUsername() + " is a member of team: " + team.getName());
+                    LOGGER.debug("{} is a member of team: {}", user.getUsername(), team.getName());
                     if (team.getMappedLdapGroups() != null) {
                         for (final MappedLdapGroup mappedLdapGroup : team.getMappedLdapGroups()) {
-                            LOGGER.debug(mappedLdapGroup.getDn() + " is mapped to team: " + team.getName());
+                            LOGGER.debug("{} is mapped to team: {}", mappedLdapGroup.getDn(), team.getName());
                             if (!groupDNs.contains(mappedLdapGroup.getDn())) {
-                                LOGGER.debug(mappedLdapGroup.getDn() + " is not identified in the List of group DNs specified. Queuing removal of membership for user " + user.getUsername());
+                                LOGGER.debug("{} is not identified in the List of group DNs specified. Queuing removal of membership for user {}", mappedLdapGroup.getDn(), user.getUsername());
                                 removeThese.add(team);
                             }
                         }
                     } else {
-                        LOGGER.debug(team.getName() + " does not have any mapped LDAP groups. Queuing removal of " + user.getUsername() + " from team: " + team.getName());
+                        LOGGER.debug("{} does not have any mapped LDAP groups. Queuing removal of {} from team: {}", team.getName(), user.getUsername(), team.getName());
                         removeThese.add(team);
                     }
                 }
             }
             for (final Team team: removeThese) {
-                LOGGER.debug("Removing user: " + user.getUsername() + " from team: " + team.getName());
+                LOGGER.debug("Removing user: {} from team: {}", user.getUsername(), team.getName());
                 removeUserFromTeam(user, team);
             }
             for (final String groupDN: groupDNs) {
                 for (final MappedLdapGroup mappedLdapGroup: getMappedLdapGroups(groupDN)) {
-                    LOGGER.debug("Adding user: " + user.getUsername() + " to team: " + mappedLdapGroup.getTeam());
+                    LOGGER.debug("Adding user: {} to team: {}", user.getUsername(), mappedLdapGroup.getTeam());
                     addUserToTeam(user, mappedLdapGroup.getTeam());
                 }
             }
@@ -543,6 +541,13 @@ public class AlpineQueryManager extends AbstractAlpineQueryManager {
                 .setNamedParameters(Map.of("username", username))
                 .extension(JDOQLQuery.EXTENSION_CANDIDATE_DONT_RESTRICT_DISCRIMINATOR, true);
 
+        return executeAndCloseUnique(query);
+    }
+
+    public UserSession getUserSessionByTokenHash(String tokenHash) {
+        final Query<UserSession> query = pm.newQuery(UserSession.class);
+        query.setFilter("tokenHash == :tokenHash && expiresAt > :now");
+        query.setParameters(tokenHash, new Date());
         return executeAndCloseUnique(query);
     }
 
@@ -991,62 +996,6 @@ public class AlpineQueryManager extends AbstractAlpineQueryManager {
      */
     public boolean isOidcGroupMapped(final Team team, final OidcGroup group) {
         return getMappedOidcGroup(team, group) != null;
-    }
-
-    /**
-     * Creates a new EventServiceLog. This method will automatically determine
-     * if the subscriber is an implementation of {@link LoggableSubscriber} and
-     * if so, will log the event. If not, then nothing will be logged and this
-     * method will return null.
-     * @param clazz the class of the subscriber task that handles the event
-     * @return a new EventServiceLog
-     */
-    public EventServiceLog createEventServiceLog(Class<? extends Subscriber> clazz) {
-        if (LoggableSubscriber.class.isAssignableFrom(clazz)) {
-            callInTransaction(() -> {
-                final var log = new EventServiceLog();
-                log.setSubscriberClass(clazz.getCanonicalName());
-                log.setStarted(new Timestamp(new Date().getTime()));
-                return pm.makePersistent(log);
-            });
-        }
-        return null;
-    }
-
-    /**
-     * Updates a EventServiceLog.
-     * @param eventServiceLog the EventServiceLog to update
-     * @return an updated EventServiceLog
-     */
-    public EventServiceLog updateEventServiceLog(EventServiceLog eventServiceLog) {
-        if (eventServiceLog == null) {
-            return null;
-        }
-
-        return callInTransaction(() -> {
-            final EventServiceLog log = getObjectById(EventServiceLog.class, eventServiceLog.getId());
-            if (log != null) {
-                log.setCompleted(new Timestamp(new Date().getTime()));
-                return log;
-            } else {
-                return null;
-            }
-        });
-    }
-
-    /**
-     * Returns the most recent log entry for the specified Subscriber.
-     * If no log entries are found, this method will return null.
-     * @param clazz The LoggableSubscriber class to query on
-     * @return a EventServiceLog
-     * @since 1.0.0
-     */
-    public EventServiceLog getLatestEventServiceLog(final Class<LoggableSubscriber> clazz) {
-        final Query<EventServiceLog> query = pm.newQuery(EventServiceLog.class, "eventClass == :clazz");
-        query.setParameters(clazz);
-        query.setOrdering("completed desc");
-        query.setRange(0, 1);
-        return executeAndCloseUnique(query);
     }
 
     /**

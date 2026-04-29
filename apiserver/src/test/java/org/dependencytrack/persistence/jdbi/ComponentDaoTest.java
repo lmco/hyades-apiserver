@@ -19,27 +19,24 @@
 package org.dependencytrack.persistence.jdbi;
 
 import org.dependencytrack.PersistenceCapableTest;
-import org.dependencytrack.model.Analysis;
 import org.dependencytrack.model.AnalysisJustification;
 import org.dependencytrack.model.AnalysisResponse;
 import org.dependencytrack.model.AnalysisState;
-import org.dependencytrack.model.AnalyzerIdentity;
 import org.dependencytrack.model.Component;
 import org.dependencytrack.model.DependencyMetrics;
-import org.dependencytrack.model.IntegrityAnalysis;
-import org.dependencytrack.model.IntegrityMatchStatus;
 import org.dependencytrack.model.Policy;
 import org.dependencytrack.model.PolicyCondition;
 import org.dependencytrack.model.PolicyViolation;
 import org.dependencytrack.model.Project;
-import org.dependencytrack.model.ViolationAnalysis;
 import org.dependencytrack.model.ViolationAnalysisState;
 import org.dependencytrack.model.Vulnerability;
+import org.dependencytrack.persistence.command.MakeAnalysisCommand;
+import org.dependencytrack.persistence.command.MakeViolationAnalysisCommand;
 import org.dependencytrack.util.DateUtil;
 import org.jdbi.v3.core.Handle;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import javax.jdo.JDOObjectNotFoundException;
 import java.time.Instant;
@@ -58,14 +55,14 @@ public class ComponentDaoTest extends PersistenceCapableTest {
     private Handle jdbiHandle;
     private ComponentDao componentDao;
 
-    @Before
+    @BeforeEach
     public void before() throws Exception {
         super.before();
         jdbiHandle = openJdbiHandle();
         componentDao = jdbiHandle.attach(ComponentDao.class);
     }
 
-    @After
+    @AfterEach
     public void after() {
         if (jdbiHandle != null) {
             jdbiHandle.close();
@@ -91,14 +88,15 @@ public class ComponentDaoTest extends PersistenceCapableTest {
         vuln.setVulnId("INT-123");
         vuln.setSource(Vulnerability.Source.INTERNAL);
         qm.persist(vuln);
-        qm.addVulnerability(vuln, component, AnalyzerIdentity.INTERNAL_ANALYZER);
-        var analysisDao = jdbiHandle.attach(AnalysisDao.class);
-        analysisDao.makeAnalysis(project.getId(), component.getId(), vuln.getId(), AnalysisState.NOT_AFFECTED,
-                        AnalysisJustification.CODE_NOT_REACHABLE, AnalysisResponse.WORKAROUND_AVAILABLE,
-                        "analysisDetails", false);
-
-        final Analysis analysis = qm.getAnalysis(component, vuln);
-        analysisDao.makeAnalysisComment(analysis.getId(), "someComment", "someCommenter");
+        qm.addVulnerability(vuln, component, "internal");
+        qm.makeAnalysis(
+                new MakeAnalysisCommand(component, vuln)
+                        .withState(AnalysisState.NOT_AFFECTED)
+                        .withJustification(AnalysisJustification.CODE_NOT_REACHABLE)
+                        .withResponse(AnalysisResponse.WORKAROUND_AVAILABLE)
+                        .withDetails("analysisDetails")
+                        .withSuppress(false)
+                        .withComment("someComment"));
 
         // Create a child component to validate that deletion is indeed recursive.
         final var componentChild = new Component();
@@ -126,20 +124,11 @@ public class ComponentDaoTest extends PersistenceCapableTest {
         policyViolation.setType(PolicyViolation.Type.OPERATIONAL);
         policyViolation.setTimestamp(new Date());
         qm.persist(policyViolation);
-        final ViolationAnalysis violationAnalysis = qm.makeViolationAnalysis(componentChild, policyViolation,
-                ViolationAnalysisState.REJECTED, false);
-        qm.makeViolationAnalysisComment(violationAnalysis, "someComment", "someCommenter");
-
-        // Assign am integrity analysis to componentChild
-        final var integrityAnalysis = new IntegrityAnalysis();
-        integrityAnalysis.setComponent(componentChild);
-        integrityAnalysis.setMd5HashMatchStatus(IntegrityMatchStatus.HASH_MATCH_PASSED);
-        integrityAnalysis.setSha1HashMatchStatus(IntegrityMatchStatus.HASH_MATCH_PASSED);
-        integrityAnalysis.setSha256HashMatchStatus(IntegrityMatchStatus.HASH_MATCH_PASSED);
-        integrityAnalysis.setSha512HashMatchStatus(IntegrityMatchStatus.HASH_MATCH_PASSED);
-        integrityAnalysis.setIntegrityCheckStatus(IntegrityMatchStatus.HASH_MATCH_PASSED);
-        integrityAnalysis.setUpdatedAt(new Date());
-        qm.persist(integrityAnalysis);
+        qm.makeViolationAnalysis(
+                new MakeViolationAnalysisCommand(componentChild, policyViolation)
+                        .withState(ViolationAnalysisState.REJECTED)
+                        .withCommenter("someCommenter")
+                        .withComment("someComment"));
 
         // Create metrics for component.
         useJdbiHandle(handle ->  {
@@ -160,7 +149,6 @@ public class ComponentDaoTest extends PersistenceCapableTest {
         assertThatExceptionOfType(JDOObjectNotFoundException.class).isThrownBy(() -> qm.getObjectById(Component.class, component.getId()));
         assertThatExceptionOfType(JDOObjectNotFoundException.class).isThrownBy(() -> qm.getObjectById(Component.class, componentChild.getId()));
         assertThatExceptionOfType(JDOObjectNotFoundException.class).isThrownBy(() -> qm.getObjectById(PolicyViolation.class, policyViolation.getId()));
-        assertThatExceptionOfType(JDOObjectNotFoundException.class).isThrownBy(() -> qm.getObjectById(IntegrityAnalysis.class, integrityAnalysis.getId()));
 
         // Ensure associated objects were NOT deleted.
         assertThatNoException().isThrownBy(() -> qm.getObjectById(Project.class, project.getId()));

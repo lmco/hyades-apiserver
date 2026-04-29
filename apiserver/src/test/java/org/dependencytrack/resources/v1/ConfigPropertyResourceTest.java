@@ -22,18 +22,23 @@ import alpine.model.ConfigProperty;
 import alpine.model.IConfigProperty;
 import alpine.server.filters.ApiFilter;
 import alpine.server.filters.AuthenticationFeature;
+import alpine.server.filters.AuthorizationFeature;
 import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
 import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import org.dependencytrack.JerseyTestRule;
+import org.dependencytrack.JerseyTestExtension;
 import org.dependencytrack.ResourceTest;
+import org.dependencytrack.auth.Permissions;
 import org.dependencytrack.model.ConfigPropertyConstants;
+import org.dependencytrack.secret.management.SecretManager;
+import org.dependencytrack.secret.management.SecretMetadata;
+import org.glassfish.hk2.utilities.binding.AbstractBinder;
 import org.glassfish.jersey.server.ResourceConfig;
-import org.junit.Assert;
-import org.junit.ClassRule;
-import org.junit.Test;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 import java.util.Arrays;
 
@@ -44,47 +49,56 @@ import static org.dependencytrack.model.ConfigPropertyConstants.CUSTOM_RISK_SCOR
 import static org.dependencytrack.model.ConfigPropertyConstants.CUSTOM_RISK_SCORE_LOW;
 import static org.dependencytrack.model.ConfigPropertyConstants.CUSTOM_RISK_SCORE_MEDIUM;
 import static org.dependencytrack.model.ConfigPropertyConstants.CUSTOM_RISK_SCORE_UNASSIGNED;
-import static org.junit.Assert.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class ConfigPropertyResourceTest extends ResourceTest {
 
-    @ClassRule
-    public static JerseyTestRule jersey = new JerseyTestRule(
+    private static final SecretManager secretManager = mock(SecretManager.class);
+
+    @RegisterExtension
+    static JerseyTestExtension jersey = new JerseyTestExtension(
             new ResourceConfig(ConfigPropertyResource.class)
                     .register(ApiFilter.class)
-                    .register(AuthenticationFeature.class));
+                    .register(AuthenticationFeature.class)
+                    .register(AuthorizationFeature.class)
+                    .register(new AbstractBinder() {
+                        @Override
+                        protected void configure() {
+                            bind(secretManager).to(SecretManager.class);
+                        }
+                    }));
 
     @Test
     public void getConfigPropertiesTest() {
+        initializeWithPermissions(Permissions.SYSTEM_CONFIGURATION_READ);
+
         qm.createConfigProperty("my.group", "my.string", "ABC", IConfigProperty.PropertyType.STRING, "A string");
         qm.createConfigProperty("my.group", "my.integer", "1", IConfigProperty.PropertyType.INTEGER, "A integer");
-        qm.createConfigProperty("my.group", "my.password", "password", IConfigProperty.PropertyType.ENCRYPTEDSTRING, "A password");
         Response response = jersey.target(V1_CONFIG_PROPERTY).request()
                 .header(X_API_KEY, apiKey)
                 .get(Response.class);
         assertEquals(200, response.getStatus(), 0);
         JsonArray json = parseJsonArray(response);
-        Assert.assertNotNull(json);
-        assertEquals(3, json.size());
+        Assertions.assertNotNull(json);
+        assertEquals(2, json.size());
         assertEquals("my.group", json.getJsonObject(0).getString("groupName"));
         assertEquals("my.integer", json.getJsonObject(0).getString("propertyName"));
         assertEquals("1", json.getJsonObject(0).getString("propertyValue"));
         assertEquals("INTEGER", json.getJsonObject(0).getString("propertyType"));
         assertEquals("A integer", json.getJsonObject(0).getString("description"));
-        assertEquals("my.group", json.getJsonObject(2).getString("groupName"));
-        assertEquals("my.string", json.getJsonObject(2).getString("propertyName"));
-        assertEquals("ABC", json.getJsonObject(2).getString("propertyValue"));
-        assertEquals("STRING", json.getJsonObject(2).getString("propertyType"));
-        assertEquals("A string", json.getJsonObject(2).getString("description"));
         assertEquals("my.group", json.getJsonObject(1).getString("groupName"));
-        assertEquals("my.password", json.getJsonObject(1).getString("propertyName"));
-        assertEquals("HiddenDecryptedPropertyPlaceholder", json.getJsonObject(1).getString("propertyValue"));
-        assertEquals("ENCRYPTEDSTRING", json.getJsonObject(1).getString("propertyType"));
-        assertEquals("A password", json.getJsonObject(1).getString("description"));
+        assertEquals("my.string", json.getJsonObject(1).getString("propertyName"));
+        assertEquals("ABC", json.getJsonObject(1).getString("propertyValue"));
+        assertEquals("STRING", json.getJsonObject(1).getString("propertyType"));
+        assertEquals("A string", json.getJsonObject(1).getString("description"));
     }
 
     @Test
     public void updateConfigPropertyStringTest() {
+        initializeWithPermissions(Permissions.SYSTEM_CONFIGURATION_UPDATE);
+
         ConfigProperty property = qm.createConfigProperty("my.group", "my.string", "ABC", IConfigProperty.PropertyType.STRING, "A string");
         ConfigProperty request = qm.detach(ConfigProperty.class, property.getId());
         request.setPropertyValue("DEF");
@@ -93,7 +107,7 @@ public class ConfigPropertyResourceTest extends ResourceTest {
                 .post(Entity.entity(request, MediaType.APPLICATION_JSON));
         assertEquals(200, response.getStatus(), 0);
         JsonObject json = parseJsonObject(response);
-        Assert.assertNotNull(json);
+        Assertions.assertNotNull(json);
         assertEquals("my.group", json.getString("groupName"));
         assertEquals("my.string", json.getString("propertyName"));
         assertEquals("DEF", json.getString("propertyValue"));
@@ -103,6 +117,8 @@ public class ConfigPropertyResourceTest extends ResourceTest {
 
     @Test
     public void updateConfigPropertyBooleanTest() {
+        initializeWithPermissions(Permissions.SYSTEM_CONFIGURATION_UPDATE);
+
         ConfigProperty property = qm.createConfigProperty("my.group", "my.boolean", "false", IConfigProperty.PropertyType.BOOLEAN, "A boolean");
         ConfigProperty request = qm.detach(ConfigProperty.class, property.getId());
         request.setPropertyValue("true");
@@ -111,7 +127,7 @@ public class ConfigPropertyResourceTest extends ResourceTest {
                 .post(Entity.entity(request, MediaType.APPLICATION_JSON));
         assertEquals(200, response.getStatus(), 0);
         JsonObject json = parseJsonObject(response);
-        Assert.assertNotNull(json);
+        Assertions.assertNotNull(json);
         assertEquals("my.group", json.getString("groupName"));
         assertEquals("my.boolean", json.getString("propertyName"));
         assertEquals("true", json.getString("propertyValue"));
@@ -121,6 +137,8 @@ public class ConfigPropertyResourceTest extends ResourceTest {
 
     @Test
     public void updateConfigPropertyNumberTest() {
+        initializeWithPermissions(Permissions.SYSTEM_CONFIGURATION_UPDATE);
+
         ConfigProperty property = qm.createConfigProperty("my.group", "my.number", "7.75", IConfigProperty.PropertyType.NUMBER, "A number");
         ConfigProperty request = qm.detach(ConfigProperty.class, property.getId());
         request.setPropertyValue("5.50");
@@ -129,7 +147,7 @@ public class ConfigPropertyResourceTest extends ResourceTest {
                 .post(Entity.entity(request, MediaType.APPLICATION_JSON));
         assertEquals(200, response.getStatus(), 0);
         JsonObject json = parseJsonObject(response);
-        Assert.assertNotNull(json);
+        Assertions.assertNotNull(json);
         assertEquals("my.group", json.getString("groupName"));
         assertEquals("my.number", json.getString("propertyName"));
         assertEquals("5.50", json.getString("propertyValue"));
@@ -138,33 +156,9 @@ public class ConfigPropertyResourceTest extends ResourceTest {
     }
 
     @Test
-    public void updateBadTaskSchedulerCadenceConfigPropertyTest() {
-        ConfigProperty property = qm.createConfigProperty(ConfigPropertyConstants.TASK_SCHEDULER_LDAP_SYNC_CADENCE.getGroupName(), "my.cadence", "24", IConfigProperty.PropertyType.INTEGER, "A cadence");
-        ConfigProperty request = qm.detach(ConfigProperty.class, property.getId());
-        request.setPropertyValue("-2");
-        Response response = jersey.target(V1_CONFIG_PROPERTY).request()
-                .header(X_API_KEY, apiKey)
-                .post(Entity.entity(request, MediaType.APPLICATION_JSON));
-        assertEquals(400, response.getStatus(), 0);
-        String body = getPlainTextBody(response);
-        assertEquals("A Task scheduler cadence ("+request.getPropertyName()+") cannot be inferior to one hour.A value of -2 was provided.", body);
-    }
-
-    @Test
-    public void updateBadIndexConsistencyThresholdConfigPropertyTest() {
-        ConfigProperty property = qm.createConfigProperty(ConfigPropertyConstants.SEARCH_INDEXES_CONSISTENCY_CHECK_DELTA_THRESHOLD.getGroupName(), ConfigPropertyConstants.SEARCH_INDEXES_CONSISTENCY_CHECK_DELTA_THRESHOLD.getPropertyName(), "24", IConfigProperty.PropertyType.INTEGER, ConfigPropertyConstants.SEARCH_INDEXES_CONSISTENCY_CHECK_DELTA_THRESHOLD.getDescription());
-        ConfigProperty request = qm.detach(ConfigProperty.class, property.getId());
-        request.setPropertyValue("-1");
-        Response response = jersey.target(V1_CONFIG_PROPERTY).request()
-                .header(X_API_KEY, apiKey)
-                .post(Entity.entity(request, MediaType.APPLICATION_JSON));
-        assertEquals(400, response.getStatus(), 0);
-        String body = getPlainTextBody(response);
-        assertEquals("Lucene index delta threshold ("+request.getPropertyName()+") cannot be inferior to 1 or superior to 100.A value of -1 was provided.", body);
-    }
-
-    @Test
     public void updateConfigPropertyUrlTest() {
+        initializeWithPermissions(Permissions.SYSTEM_CONFIGURATION_UPDATE);
+
         ConfigProperty property = qm.createConfigProperty("my.group", "my.url", "http://localhost", IConfigProperty.PropertyType.URL, "A url");
         ConfigProperty request = qm.detach(ConfigProperty.class, property.getId());
         request.setPropertyValue("http://localhost/path");
@@ -173,7 +167,7 @@ public class ConfigPropertyResourceTest extends ResourceTest {
                 .post(Entity.entity(request, MediaType.APPLICATION_JSON));
         assertEquals(200, response.getStatus(), 0);
         JsonObject json = parseJsonObject(response);
-        Assert.assertNotNull(json);
+        Assertions.assertNotNull(json);
         assertEquals("my.group", json.getString("groupName"));
         assertEquals("my.url", json.getString("propertyName"));
         assertEquals("http://localhost/path", json.getString("propertyValue"));
@@ -183,6 +177,8 @@ public class ConfigPropertyResourceTest extends ResourceTest {
 
     @Test
     public void updateConfigPropertyUuidTest() {
+        initializeWithPermissions(Permissions.SYSTEM_CONFIGURATION_UPDATE);
+
         ConfigProperty property = qm.createConfigProperty("my.group", "my.uuid", "a496cabc-749d-4751-b9e5-3b49b656d018", IConfigProperty.PropertyType.UUID, "A uuid");
         ConfigProperty request = qm.detach(ConfigProperty.class, property.getId());
         request.setPropertyValue("fe03c401-b5a1-4b86-bc3b-1b7a68f0f78d");
@@ -191,7 +187,7 @@ public class ConfigPropertyResourceTest extends ResourceTest {
                 .post(Entity.entity(request, MediaType.APPLICATION_JSON));
         assertEquals(200, response.getStatus(), 0);
         JsonObject json = parseJsonObject(response);
-        Assert.assertNotNull(json);
+        Assertions.assertNotNull(json);
         assertEquals("my.group", json.getString("groupName"));
         assertEquals("my.uuid", json.getString("propertyName"));
         assertEquals("fe03c401-b5a1-4b86-bc3b-1b7a68f0f78d", json.getString("propertyValue"));
@@ -200,25 +196,9 @@ public class ConfigPropertyResourceTest extends ResourceTest {
     }
 
     @Test
-    public void updateConfigPropertyEncryptedStringTest() {
-        ConfigProperty property = qm.createConfigProperty("my.group", "my.encryptedString", "aaaaa", IConfigProperty.PropertyType.ENCRYPTEDSTRING, "A encrypted string");
-        ConfigProperty request = qm.detach(ConfigProperty.class, property.getId());
-        request.setPropertyValue("bbbbb");
-        Response response = jersey.target(V1_CONFIG_PROPERTY).request()
-                .header(X_API_KEY, apiKey)
-                .post(Entity.entity(request, MediaType.APPLICATION_JSON));
-        assertEquals(200, response.getStatus(), 0);
-        JsonObject json = parseJsonObject(response);
-        Assert.assertNotNull(json);
-        assertEquals("my.group", json.getString("groupName"));
-        assertEquals("my.encryptedString", json.getString("propertyName"));
-        assertEquals("HiddenDecryptedPropertyPlaceholder", json.getString("propertyValue"));
-        assertEquals("ENCRYPTEDSTRING", json.getString("propertyType"));
-        assertEquals("A encrypted string", json.getString("description"));
-    }
-
-    @Test
     public void updateConfigPropertyReadOnlyTest() {
+        initializeWithPermissions(Permissions.SYSTEM_CONFIGURATION_UPDATE);
+
         qm.createConfigProperty(
                 ConfigPropertyConstants.INTERNAL_CLUSTER_ID.getGroupName(),
                 ConfigPropertyConstants.INTERNAL_CLUSTER_ID.getPropertyName(),
@@ -243,6 +223,8 @@ public class ConfigPropertyResourceTest extends ResourceTest {
 
     @Test
     public void testRiskScoreInvalid(){
+        initializeWithPermissions(Permissions.SYSTEM_CONFIGURATION_UPDATE);
+
         qm.createConfigProperty(
                 CUSTOM_RISK_SCORE_CRITICAL.getGroupName(),
                 CUSTOM_RISK_SCORE_CRITICAL.getPropertyName(),
@@ -295,6 +277,8 @@ public class ConfigPropertyResourceTest extends ResourceTest {
 
     @Test
     public void testRiskScoreUpdate(){
+        initializeWithPermissions(Permissions.SYSTEM_CONFIGURATION_UPDATE);
+
         qm.createConfigProperty(
                 CUSTOM_RISK_SCORE_CRITICAL.getGroupName(),
                 CUSTOM_RISK_SCORE_CRITICAL.getPropertyName(),
@@ -343,7 +327,7 @@ public class ConfigPropertyResourceTest extends ResourceTest {
 
         assertThat(response.getStatus()).isEqualTo(200);
         JsonObject json = parseJsonObject(response);
-        Assert.assertNotNull(json);
+        Assertions.assertNotNull(json);
         assertEquals("risk-score", json.getString("groupName"));
         assertEquals("weight.critical", json.getString("propertyName"));
         assertEquals("8", json.getString("propertyValue"));
@@ -353,34 +337,33 @@ public class ConfigPropertyResourceTest extends ResourceTest {
 
     @Test
     public void updateConfigPropertiesAggregateTest() {
+        initializeWithPermissions(Permissions.SYSTEM_CONFIGURATION_UPDATE);
+
         ConfigProperty prop1 = qm.createConfigProperty("my.group", "my.string1", "ABC", IConfigProperty.PropertyType.STRING, "A string");
         ConfigProperty prop2 = qm.createConfigProperty("my.group", "my.string2", "DEF", IConfigProperty.PropertyType.STRING, "A string");
         ConfigProperty prop3 = qm.createConfigProperty("my.group", "my.string3", "GHI", IConfigProperty.PropertyType.STRING, "A string");
-        ConfigProperty prop4 = qm.createConfigProperty(ConfigPropertyConstants.TASK_SCHEDULER_LDAP_SYNC_CADENCE.getGroupName(), "my.cadence", "1", IConfigProperty.PropertyType.INTEGER, "A cadence");
         prop1 = qm.detach(ConfigProperty.class, prop1.getId());
         prop2 = qm.detach(ConfigProperty.class, prop2.getId());
         prop3 = qm.detach(ConfigProperty.class, prop3.getId());
-        prop4 = qm.detach(ConfigProperty.class, prop4.getId());
         prop3.setPropertyValue("XYZ");
-        prop4.setPropertyValue("-2");
         Response response = jersey.target(V1_CONFIG_PROPERTY+"/aggregate").request()
                 .header(X_API_KEY, apiKey)
-                .post(Entity.entity(Arrays.asList(prop1, prop2, prop3, prop4), MediaType.APPLICATION_JSON));
+                .post(Entity.entity(Arrays.asList(prop1, prop2, prop3), MediaType.APPLICATION_JSON));
         assertEquals(200, response.getStatus(), 0);
         JsonArray json = parseJsonArray(response);
         JsonObject modifiedProp = json.getJsonObject(2);
-        Assert.assertNotNull(modifiedProp);
+        Assertions.assertNotNull(modifiedProp);
         assertEquals("my.group", modifiedProp.getString("groupName"));
         assertEquals("my.string3", modifiedProp.getString("propertyName"));
         assertEquals("XYZ", modifiedProp.getString("propertyValue"));
         assertEquals("STRING", modifiedProp.getString("propertyType"));
         assertEquals("A string", modifiedProp.getString("description"));
-        String body = json.getString(3);
-        assertEquals("A Task scheduler cadence ("+prop4.getPropertyName()+") cannot be inferior to one hour.A value of -2 was provided.", body);
     }
 
     @Test
     public void updateConfigPropertyBomValidationModeTest() {
+        initializeWithPermissions(Permissions.SYSTEM_CONFIGURATION_UPDATE);
+
         qm.createConfigProperty(
                 ConfigPropertyConstants.BOM_VALIDATION_MODE.getGroupName(),
                 ConfigPropertyConstants.BOM_VALIDATION_MODE.getPropertyName(),
@@ -424,6 +407,8 @@ public class ConfigPropertyResourceTest extends ResourceTest {
 
     @Test
     public void updateConfigPropertyBomValidationTagsExclusiveTest() {
+        initializeWithPermissions(Permissions.SYSTEM_CONFIGURATION_UPDATE);
+
         qm.createConfigProperty(
                 ConfigPropertyConstants.BOM_VALIDATION_TAGS_EXCLUSIVE.getGroupName(),
                 ConfigPropertyConstants.BOM_VALIDATION_TAGS_EXCLUSIVE.getPropertyName(),
@@ -467,6 +452,8 @@ public class ConfigPropertyResourceTest extends ResourceTest {
 
     @Test
     public void updateConfigPropertyBomValidationTagsInclusiveTest() {
+        initializeWithPermissions(Permissions.SYSTEM_CONFIGURATION_UPDATE);
+
         qm.createConfigProperty(
                 ConfigPropertyConstants.BOM_VALIDATION_TAGS_INCLUSIVE.getGroupName(),
                 ConfigPropertyConstants.BOM_VALIDATION_TAGS_INCLUSIVE.getPropertyName(),
@@ -509,7 +496,64 @@ public class ConfigPropertyResourceTest extends ResourceTest {
     }
 
     @Test
+    public void updateConfigPropertySecretNameNotFoundTest() {
+        initializeWithPermissions(Permissions.SYSTEM_CONFIGURATION_UPDATE);
+
+        qm.createConfigProperty(
+                ConfigPropertyConstants.FORTIFY_SSC_TOKEN.getGroupName(),
+                ConfigPropertyConstants.FORTIFY_SSC_TOKEN.getPropertyName(),
+                ConfigPropertyConstants.FORTIFY_SSC_TOKEN.getDefaultPropertyValue(),
+                ConfigPropertyConstants.FORTIFY_SSC_TOKEN.getPropertyType(),
+                ConfigPropertyConstants.FORTIFY_SSC_TOKEN.getDescription()
+        );
+
+        when(secretManager.getSecretMetadata("nonexistent-secret")).thenReturn(null);
+
+        final Response response = jersey.target(V1_CONFIG_PROPERTY).request()
+                .header(X_API_KEY, apiKey)
+                .post(Entity.entity("""
+                        {
+                          "groupName": "integrations",
+                          "propertyName": "fortify.ssc.token",
+                          "propertyValue": "nonexistent-secret"
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        assertThat(response.getStatus()).isEqualTo(400);
+        assertThat(getPlainTextBody(response)).isEqualTo("The secret with name \"nonexistent-secret\" could not be found.");
+    }
+
+    @Test
+    public void updateConfigPropertySecretNameFoundTest() {
+        initializeWithPermissions(Permissions.SYSTEM_CONFIGURATION_UPDATE);
+
+        qm.createConfigProperty(
+                ConfigPropertyConstants.KENNA_TOKEN.getGroupName(),
+                ConfigPropertyConstants.KENNA_TOKEN.getPropertyName(),
+                ConfigPropertyConstants.KENNA_TOKEN.getDefaultPropertyValue(),
+                ConfigPropertyConstants.KENNA_TOKEN.getPropertyType(),
+                ConfigPropertyConstants.KENNA_TOKEN.getDescription()
+        );
+
+        when(secretManager.getSecretMetadata("my-secret")).thenReturn(new SecretMetadata("my-secret", null, null, null));
+
+        final Response response = jersey.target(V1_CONFIG_PROPERTY).request()
+                .header(X_API_KEY, apiKey)
+                .post(Entity.entity("""
+                        {
+                          "groupName": "integrations",
+                          "propertyName": "kenna.token",
+                          "propertyValue": "my-secret"
+                        }
+                        """, MediaType.APPLICATION_JSON));
+
+        assertThat(response.getStatus()).isEqualTo(200);
+    }
+
+    @Test
     public void getPublicAllPropertiesTest() {
+        initializeWithPermissions(Permissions.SYSTEM_CONFIGURATION_READ);
+
         for (ConfigPropertyConstants configProperty : ConfigPropertyConstants.values()) {
             String groupName = configProperty.getGroupName();
             String propertyName = configProperty.getPropertyName();

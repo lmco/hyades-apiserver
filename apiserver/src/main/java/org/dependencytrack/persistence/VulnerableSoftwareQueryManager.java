@@ -18,12 +18,13 @@
  */
 package org.dependencytrack.persistence;
 
-import alpine.common.logging.Logger;
 import alpine.resources.AlpineRequest;
 import org.dependencytrack.model.AffectedVersionAttribution;
 import org.dependencytrack.model.Vulnerability;
 import org.dependencytrack.model.VulnerableSoftware;
 import org.dependencytrack.util.PersistenceUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.jdo.PersistenceManager;
 import javax.jdo.Query;
@@ -40,7 +41,7 @@ import static org.dependencytrack.util.PersistenceUtil.assertPersistent;
 
 final class VulnerableSoftwareQueryManager extends QueryManager implements IQueryManager {
 
-    private static final Logger LOGGER = Logger.getLogger(VulnerableSoftwareQueryManager.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(VulnerableSoftwareQueryManager.class);
 
     /**
      * Constructs a new QueryManager.
@@ -65,9 +66,13 @@ final class VulnerableSoftwareQueryManager extends QueryManager implements IQuer
      * @return a VulnerableSoftware object, or null if not found
      */
     @Override
-    public VulnerableSoftware getVulnerableSoftwareByCpe23(String cpe23,
-                                                           String versionEndExcluding, String versionEndIncluding,
-                                                           String versionStartExcluding, String versionStartIncluding) {
+    public VulnerableSoftware getVulnerableSoftwareByCpe23(
+            String cpe23,
+            String version,
+            String versionEndExcluding,
+            String versionEndIncluding,
+            String versionStartExcluding,
+            String versionStartIncluding) {
         final Query<VulnerableSoftware> query = pm.newQuery(VulnerableSoftware.class);
         var filter = "cpe23 == :cpe23";
         final var parameters = new HashMap<String, Object>();
@@ -77,6 +82,12 @@ final class VulnerableSoftwareQueryManager extends QueryManager implements IQuer
         // cache. This method is called very frequently during NVD mirroring,
         // we should avoid the overhead of repeated re-compilation if possible.
         // See also: https://github.com/DependencyTrack/dependency-track/issues/2540
+        if (version != null) {
+            filter += " && version == :version";
+            parameters.put("version", version);
+        } else {
+            filter += " && version == null";
+        }
         if (versionEndExcluding != null) {
             filter += " && versionEndExcluding == :vee";
             parameters.put("vee", versionEndExcluding);
@@ -187,11 +198,17 @@ final class VulnerableSoftwareQueryManager extends QueryManager implements IQuer
         assertPersistent(persistentVuln, "vuln must be persistent");
         assertNonPersistentAll(vsList, "vsList must not be persistent");
 
+        // Create a copy of vsList that is guaranteed to be mutable,
+        // as we'll need to modify it during the synchronization process.
+        //
+        // If vsList was created via Collections#emptyList(), Stream#toList() or similar,
+        // it'd be immutable.
+        final var mutableVsList = new ArrayList<>(vsList);
+
         runInTransaction(() -> {
             // Get all VulnerableSoftware records that are currently associated with the vulnerability.
             // Note: For SOME ODD REASON, duplicate (as in, same database ID and all) VulnerableSoftware
-            // records are returned, when operating on data that was originally created by the feed-based
-            // NistMirrorTask. We thus have to deduplicate here.
+            // records are returned. We thus have to deduplicate here.
             final List<VulnerableSoftware> vsOldList = persistentVuln.getVulnerableSoftware().stream().distinct().toList();
             LOGGER.trace("%s: Existing VS: %d".formatted(persistentVuln.getVulnId(), vsOldList.size()));
 
@@ -215,7 +232,7 @@ final class VulnerableSoftwareQueryManager extends QueryManager implements IQuer
             final var matchedOldVsList = new ArrayList<VulnerableSoftware>();
 
             for (final VulnerableSoftware vsOld : vsOldList) {
-                if (vsList.removeIf(vsOld::equalsIgnoringDatastoreIdentity)) {
+                if (mutableVsList.removeIf(vsOld::equalsIgnoringDatastoreIdentity)) {
                     vsListToKeep.add(vsOld);
                     matchedOldVsList.add(vsOld);
                 } else {
@@ -276,11 +293,12 @@ final class VulnerableSoftwareQueryManager extends QueryManager implements IQuer
 
             // For VulnerableSoftware records that are newly reported for this vulnerability, check if any matching
             // records exist in the database that are currently associated with other (or no) vulnerabilities.
-            for (final VulnerableSoftware vs : vsList) {
+            for (final VulnerableSoftware vs : mutableVsList) {
                 final VulnerableSoftware existingVs;
                 if (vs.getCpe23() != null) {
                     existingVs = getVulnerableSoftwareByCpe23(
                             vs.getCpe23(),
+                            vs.getVersion(),
                             vs.getVersionEndExcluding(),
                             vs.getVersionEndIncluding(),
                             vs.getVersionStartExcluding(),

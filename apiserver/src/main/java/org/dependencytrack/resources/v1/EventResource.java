@@ -19,7 +19,6 @@
 package org.dependencytrack.resources.v1;
 
 import alpine.event.framework.Event;
-import alpine.server.resources.AlpineResource;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -29,19 +28,25 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import org.dependencytrack.dex.engine.api.DexEngine;
+import org.dependencytrack.dex.engine.api.WorkflowRunMetadata;
+import org.dependencytrack.dex.engine.api.WorkflowRunStatus;
+import org.dependencytrack.dex.engine.api.request.ExistsWorkflowRunRequest;
 import org.dependencytrack.model.validation.ValidUuid;
-import org.dependencytrack.persistence.jdbi.WorkflowDao;
+import org.dependencytrack.resources.AbstractApiResource;
 import org.dependencytrack.resources.v1.vo.IsTokenBeingProcessedResponse;
 
+import java.util.Map;
 import java.util.UUID;
 
-import static org.dependencytrack.persistence.jdbi.JdbiFactory.withJdbiHandle;
+import static org.dependencytrack.dex.DexWorkflowLabels.WF_LABEL_BOM_UPLOAD_TOKEN;
 
 /**
  * JAX-RS resources for processing Events
@@ -55,7 +60,14 @@ import static org.dependencytrack.persistence.jdbi.JdbiFactory.withJdbiHandle;
         @SecurityRequirement(name = "ApiKeyAuth"),
         @SecurityRequirement(name = "BearerAuth")
 })
-public class EventResource extends AlpineResource {
+public class EventResource extends AbstractApiResource {
+
+    private final DexEngine dexEngine;
+
+    @Inject
+    EventResource(DexEngine dexEngine) {
+        this.dexEngine = dexEngine;
+    }
 
     @GET
     @Path("/token/{uuid}")
@@ -90,13 +102,28 @@ public class EventResource extends AlpineResource {
         final boolean isProcessing;
         if (Event.isEventBeingProcessed(token)) {
             isProcessing = true;
+        } else if (hasNonTerminalDexRun(token)) {
+            isProcessing = true;
         } else {
-            isProcessing = withJdbiHandle(getAlpineRequest(), handle ->
-                    handle.attach(WorkflowDao.class).existsWithNonTerminalStatus(token));
+            isProcessing = false;
         }
 
         final var response = new IsTokenBeingProcessedResponse();
         response.setProcessing(isProcessing);
         return Response.ok(response).build();
     }
+
+    private boolean hasNonTerminalDexRun(UUID token) {
+        final boolean hasNonTerminalByLabel =
+                dexEngine.existsRun(new ExistsWorkflowRunRequest(
+                        WorkflowRunStatus.NON_TERMINAL_STATUSES,
+                        Map.of(WF_LABEL_BOM_UPLOAD_TOKEN, token.toString())));
+        if (hasNonTerminalByLabel) {
+            return true;
+        }
+
+        final WorkflowRunMetadata runMetadata = dexEngine.getRunMetadataById(token);
+        return runMetadata != null && !runMetadata.status().isTerminal();
+    }
+
 }

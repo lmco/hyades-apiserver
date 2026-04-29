@@ -20,21 +20,39 @@ package org.dependencytrack.integrations.kenna;
 
 import alpine.model.IConfigProperty;
 import org.dependencytrack.PersistenceCapableTest;
-import org.junit.Assert;
-import org.junit.Test;
+import org.dependencytrack.secret.TestSecretManager;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 
 import java.io.InputStream;
+import java.net.http.HttpClient;
 
 import static org.dependencytrack.model.ConfigPropertyConstants.KENNA_CONNECTOR_ID;
 import static org.dependencytrack.model.ConfigPropertyConstants.KENNA_ENABLED;
 
-public class KennaSecurityUploaderTest extends PersistenceCapableTest {
+class KennaSecurityUploaderTest extends PersistenceCapableTest {
+
+    private static HttpClient httpClient;
+
+    @BeforeAll
+    static void beforeAll() {
+        httpClient = HttpClient.newHttpClient();
+    }
+
+    @AfterAll
+    static void afterAll() {
+        if (httpClient != null) {
+            httpClient.close();
+        }
+    }
 
     @Test
     public void testIntegrationMetadata() {
-        KennaSecurityUploader extension = new KennaSecurityUploader();
-        Assert.assertEquals("Kenna Security", extension.name());
-        Assert.assertEquals("Pushes Dependency-Track findings to Kenna Security", extension.description());
+        KennaSecurityUploader extension = new KennaSecurityUploader(httpClient, new TestSecretManager());
+        Assertions.assertEquals("Kenna Security", extension.name());
+        Assertions.assertEquals("Pushes Dependency-Track findings to Kenna Security", extension.description());
     }
 
     @Test
@@ -53,23 +71,23 @@ public class KennaSecurityUploaderTest extends PersistenceCapableTest {
                 IConfigProperty.PropertyType.STRING,
                 null
         );
-        KennaSecurityUploader extension = new KennaSecurityUploader();
+        KennaSecurityUploader extension = new KennaSecurityUploader(httpClient, new TestSecretManager());
         extension.setQueryManager(qm);
-        Assert.assertTrue(extension.isEnabled());
+        Assertions.assertTrue(extension.isEnabled());
     }
 
     @Test
     public void testIntegrationDisabledCases() {
-        KennaSecurityUploader extension = new KennaSecurityUploader();
+        KennaSecurityUploader extension = new KennaSecurityUploader(httpClient, new TestSecretManager());
         extension.setQueryManager(qm);
-        Assert.assertFalse(extension.isEnabled());
+        Assertions.assertFalse(extension.isEnabled());
     }
 
     @Test
     public void testIntegrationFindings() throws Exception {
-        KennaSecurityUploader extension = new KennaSecurityUploader();
+        KennaSecurityUploader extension = new KennaSecurityUploader(httpClient, new TestSecretManager());
         extension.setQueryManager(qm);
         InputStream in = extension.process();
-        Assert.assertTrue(in != null && in.available() > 0);
+        Assertions.assertTrue(in != null && in.available() > 0);
     }
 }

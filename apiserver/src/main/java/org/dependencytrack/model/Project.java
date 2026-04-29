@@ -35,14 +35,14 @@ import com.fasterxml.jackson.databind.annotation.JsonSerialize;
 import com.github.packageurl.MalformedPackageURLException;
 import com.github.packageurl.PackageURL;
 import io.swagger.v3.oas.annotations.media.Schema;
-import org.dependencytrack.persistence.converter.OrganizationalContactsJsonConverter;
-import org.dependencytrack.persistence.converter.OrganizationalEntityJsonConverter;
-import org.dependencytrack.resources.v1.serializers.CustomPackageURLSerializer;
-
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import org.dependencytrack.persistence.converter.OrganizationalContactsJsonConverter;
+import org.dependencytrack.persistence.converter.OrganizationalEntityJsonConverter;
+import org.dependencytrack.resources.v1.serializers.CustomPackageURLSerializer;
+
 import javax.jdo.annotations.Column;
 import javax.jdo.annotations.Convert;
 import javax.jdo.annotations.Element;
@@ -193,6 +193,7 @@ public class Project implements Serializable {
     @Persistent
     @Column(name = "DESCRIPTION", jdbcType = "VARCHAR")
     @JsonDeserialize(using = TrimmedStringDeserializer.class)
+    @Size(max = 255)
     @Pattern(regexp = RegexSequence.Definition.PRINTABLE_CHARS, message = "The description may only contain printable characters")
     private String description;
 
@@ -220,7 +221,7 @@ public class Project implements Serializable {
 
     @Persistent
     @Index(name = "PROJECT_PURL_IDX")
-    @Column(name = "PURL")
+    @Column(name = "PURL", jdbcType = "VARCHAR", length = 1024)
     @Size(max = 1024)
     @com.github.packageurl.validator.PackageURL
     @JsonDeserialize(using = TrimmedStringDeserializer.class)
@@ -295,6 +296,11 @@ public class Project implements Serializable {
     private Double lastInheritedRiskScore;
 
     @Persistent
+    @Column(name = "LAST_VULNERABILITY_ANALYSIS", allowsNull = "true")
+    @Schema(type = "integer", format = "int64", requiredMode = Schema.RequiredMode.NOT_REQUIRED, description = "UNIX epoch timestamp in milliseconds")
+    private Date lastVulnerabilityAnalysis;
+
+    @Persistent
     @Column(name = "INACTIVE_SINCE")
     @Schema(accessMode = Schema.AccessMode.READ_ONLY,
             type = "integer", format = "int64", description = "UNIX epoch timestamp in milliseconds")
@@ -313,6 +319,17 @@ public class Project implements Serializable {
     @Persistent(mappedBy = "project")
     @Schema(accessMode = Schema.AccessMode.READ_ONLY)
     private ProjectMetadata metadata;
+
+    @Persistent
+    @Column(name = "COLLECTION_LOGIC", jdbcType = "VARCHAR")
+    @Extension(vendorName = "datanucleus", key = "enum-check-constraint", value = "true")
+    private ProjectCollectionLogic collectionLogic;
+
+    @Persistent
+    @ForeignKey(name = "PROJECT_COLLECTION_TAG_FK", updateAction = ForeignKeyAction.NONE, deleteAction = ForeignKeyAction.RESTRICT)
+    @Column(name = "COLLECTION_TAG_ID")
+    @JsonIncludeProperties(value = {"name"})
+    private Tag collectionTag;
 
     @Persistent
     @Index(name = "PROJECT_IS_LATEST_IDX")
@@ -518,6 +535,14 @@ public class Project implements Serializable {
         this.lastInheritedRiskScore = lastInheritedRiskScore;
     }
 
+    public Date getLastVulnerabilityAnalysis() {
+        return lastVulnerabilityAnalysis;
+    }
+
+    public void setLastVulnerabilityAnalysis(Date lastVulnerabilityAnalysis) {
+        this.lastVulnerabilityAnalysis = lastVulnerabilityAnalysis;
+    }
+
     public List<ExternalReference> getExternalReferences() {
         return externalReferences;
     }
@@ -614,12 +639,28 @@ public class Project implements Serializable {
         this.dependencyGraph = dependencyGraph;
     }
 
-    public String getAuthor(){
+    public String getAuthor() {
         return author;
     }
 
-    public String setAuthor(String author){
-        return this.author=author;
+    public void setAuthor(String author) {
+        this.author = author;
+    }
+
+    public ProjectCollectionLogic getCollectionLogic() {
+        return collectionLogic;
+    }
+
+    public void setCollectionLogic(ProjectCollectionLogic collectionLogic) {
+        this.collectionLogic = collectionLogic;
+    }
+
+    public Tag getCollectionTag() {
+        return collectionTag;
+    }
+
+    public void setCollectionTag(Tag collectionTag) {
+        this.collectionTag = collectionTag;
     }
 
     @JsonProperty("isLatest")
@@ -633,19 +674,15 @@ public class Project implements Serializable {
 
     @Override
     public String toString() {
-        if (getPurl() != null) {
-            return getPurl().canonicalize();
-        } else {
-            StringBuilder sb = new StringBuilder();
-            if (getGroup() != null) {
-                sb.append(getGroup()).append(" : ");
-            }
-            sb.append(getName());
-            if (getVersion() != null) {
-                sb.append(" : ").append(getVersion());
-            }
-            return sb.toString();
+        StringBuilder sb = new StringBuilder();
+        if (getGroup() != null) {
+            sb.append(getGroup()).append(" : ");
         }
+        sb.append(getName());
+        if (getVersion() != null) {
+            sb.append(" : ").append(getVersion());
+        }
+        return sb.toString();
     }
 
     private final static class BooleanDefaultTrueSerializer extends JsonSerializer<Boolean> {

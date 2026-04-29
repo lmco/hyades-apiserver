@@ -18,8 +18,8 @@
  */
 package alpine.event.framework;
 
-import alpine.common.logging.Logger;
-import alpine.common.metrics.Metrics;
+import io.micrometer.core.instrument.Metrics;
+import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
 import org.apache.commons.lang3.concurrent.BasicThreadFactory;
 
 import java.util.concurrent.ExecutorService;
@@ -38,29 +38,35 @@ import java.util.concurrent.Executors;
  */
 public final class SingleThreadedEventService extends BaseEventService {
 
-    private static final SingleThreadedEventService INSTANCE = new SingleThreadedEventService();
-    private static final Logger LOGGER = Logger.getLogger(SingleThreadedEventService.class);
-    private static final ExecutorService EXECUTOR;
+    private static final SingleThreadedEventService INSTANCE;
     private static final String EXECUTOR_NAME = "Alpine-SingleThreadedEventService";
 
     static {
-        BasicThreadFactory factory = new BasicThreadFactory.Builder()
-                .namingPattern(EXECUTOR_NAME)
-                .uncaughtExceptionHandler(new LoggableUncaughtExceptionHandler())
-                .build();
-        EXECUTOR = Executors.newSingleThreadExecutor(factory);
-        INSTANCE.setExecutorService(EXECUTOR);
-        INSTANCE.setLogger(LOGGER);
-        Metrics.registerExecutorService(EXECUTOR, EXECUTOR_NAME);
+        final ExecutorConfig config = createExecutorConfig();
+        INSTANCE = new SingleThreadedEventService(config.executor());
+        new ExecutorServiceMetrics(INSTANCE.getExecutor(), EXECUTOR_NAME, null)
+                .bindTo(Metrics.globalRegistry);
     }
 
-    /**
-     * Private constructor
-     */
-    private SingleThreadedEventService() { }
+    private SingleThreadedEventService(ExecutorService executor) {
+        super(executor, null);
+    }
 
     public static SingleThreadedEventService getInstance() {
         return INSTANCE;
+    }
+
+    @Override
+    ExecutorConfig executorConfig() {
+        return createExecutorConfig();
+    }
+
+    private static ExecutorConfig createExecutorConfig() {
+        final var threadFactory = BasicThreadFactory.builder()
+                .namingPattern(EXECUTOR_NAME)
+                .uncaughtExceptionHandler(new LoggableUncaughtExceptionHandler())
+                .build();
+        return new ExecutorConfig(Executors.newFixedThreadPool(1, threadFactory), null);
     }
 
 }

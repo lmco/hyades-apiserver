@@ -18,8 +18,6 @@
  */
 package org.dependencytrack.resources.v1;
 
-import alpine.Config;
-import alpine.common.logging.Logger;
 import alpine.model.ApiKey;
 import alpine.model.Team;
 import alpine.model.User;
@@ -27,7 +25,6 @@ import alpine.persistence.PaginatedResult;
 import alpine.security.ApiKeyDecoder;
 import alpine.security.InvalidApiKeyFormatException;
 import alpine.server.auth.PermissionRequired;
-import alpine.server.resources.AlpineResource;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.headers.Header;
@@ -53,20 +50,20 @@ import jakarta.ws.rs.core.Response;
 import org.dependencytrack.auth.Permissions;
 import org.dependencytrack.model.validation.ValidUuid;
 import org.dependencytrack.persistence.QueryManager;
-import org.dependencytrack.persistence.jdbi.TeamDao;
+import org.dependencytrack.resources.AbstractApiResource;
 import org.dependencytrack.resources.v1.openapi.PaginatedApi;
 import org.dependencytrack.resources.v1.problems.ProblemDetails;
 import org.dependencytrack.resources.v1.problems.TeamAlreadyExistsProblemDetails;
 import org.dependencytrack.resources.v1.vo.TeamSelfResponse;
 import org.dependencytrack.resources.v1.vo.VisibleTeams;
-import org.jdbi.v3.core.Handle;
 import org.owasp.security.logging.SecurityMarkers;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
 
 import static org.datanucleus.PropertyNames.PROPERTY_RETAIN_VALUES;
-import static org.dependencytrack.persistence.jdbi.JdbiFactory.createLocalJdbi;
 import static org.dependencytrack.util.PersistenceUtil.isUniqueConstraintViolation;
 
 /**
@@ -81,9 +78,9 @@ import static org.dependencytrack.util.PersistenceUtil.isUniqueConstraintViolati
         @SecurityRequirement(name = "ApiKeyAuth"),
         @SecurityRequirement(name = "BearerAuth")
 })
-public class TeamResource extends AlpineResource {
+public class TeamResource extends AbstractApiResource {
 
-    private static final Logger LOGGER = Logger.getLogger(TeamResource.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(TeamResource.class);
 
     @GET
     @Produces(MediaType.APPLICATION_JSON)
@@ -174,7 +171,7 @@ public class TeamResource extends AlpineResource {
                     return new TeamAlreadyExistsProblemDetails(existingTeam).toResponse();
                 }
 
-                LOGGER.error("Failed to create team with name: " + jsonTeam.getName(), e);
+                LOGGER.error("Failed to create team with name: {}", jsonTeam.getName(), e);
                 return Response.status(Response.Status.INTERNAL_SERVER_ERROR).build();
             }
 
@@ -237,11 +234,8 @@ public class TeamResource extends AlpineResource {
             return qm.callInTransaction(() -> {
                 final Team team = qm.getObjectByUuid(Team.class, jsonTeam.getUuid(), Team.FetchGroup.ALL.name());
                 if (team != null) {
-                    String teamName = team.getName();
-                    try (final Handle jdbiHandle = createLocalJdbi(qm).open()) {
-                        final var teamDao = jdbiHandle.attach(TeamDao.class);
-                        teamDao.deleteTeam(team.getId());
-                    }
+                    final String teamName = team.getName();
+                    qm.delete(team);
                     super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Team deleted: " + teamName);
                     return Response.status(Response.Status.NO_CONTENT).build();
                 } else {
@@ -452,22 +446,18 @@ public class TeamResource extends AlpineResource {
             @ApiResponse(responseCode = "404", description = "No Team for the given API key found")
     })
     public Response getSelf() {
-        if (Config.getInstance().getPropertyAsBoolean(Config.AlpineKey.ENFORCE_AUTHENTICATION)) {
-            try (var qm = new QueryManager()) {
-                if (isApiKey()) {
-                    final var apiKey = qm.getApiKeyByPublicId(((ApiKey) getPrincipal()).getPublicId());
-                    final var team = apiKey.getTeams().stream().findFirst();
-                    if (team.isPresent()) {
-                        return Response.ok(new TeamSelfResponse(team.get())).build();
-                    } else {
-                        return Response.status(Response.Status.NOT_FOUND).entity("No Team for the given API key found.").build();
-                    }
+        try (var qm = new QueryManager()) {
+            if (isApiKey()) {
+                final var apiKey = qm.getApiKeyByPublicId(((ApiKey) getPrincipal()).getPublicId());
+                final var team = apiKey.getTeams().stream().findFirst();
+                if (team.isPresent()) {
+                    return Response.ok(new TeamSelfResponse(team.get())).build();
                 } else {
-                    return Response.status(Response.Status.BAD_REQUEST).entity("Invalid API key supplied.").build();
+                    return Response.status(Response.Status.NOT_FOUND).entity("No Team for the given API key found.").build();
                 }
+            } else {
+                return Response.status(Response.Status.BAD_REQUEST).entity("Invalid API key supplied.").build();
             }
         }
-        // Authentication is not enabled, but we need to return a positive response without any principal data.
-        return Response.ok().build();
     }
 }

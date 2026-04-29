@@ -21,35 +21,51 @@ package org.dependencytrack.resources.v1;
 import alpine.model.IConfigProperty.PropertyType;
 import alpine.server.filters.ApiFilter;
 import alpine.server.filters.AuthenticationFeature;
-import org.dependencytrack.JerseyTestRule;
-import org.dependencytrack.ResourceTest;
-import org.dependencytrack.model.Component;
-import org.dependencytrack.model.ComponentProperty;
-import org.dependencytrack.model.Project;
-import org.glassfish.jersey.server.ResourceConfig;
-import org.junit.ClassRule;
-import org.junit.Test;
-
+import alpine.server.filters.AuthorizationFeature;
 import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import org.dependencytrack.JerseyTestExtension;
+import org.dependencytrack.ResourceTest;
+import org.dependencytrack.auth.Permissions;
+import org.dependencytrack.model.Component;
+import org.dependencytrack.model.ComponentProperty;
+import org.dependencytrack.model.Project;
+import org.dependencytrack.secret.management.SecretManager;
+import org.glassfish.hk2.utilities.binding.AbstractBinder;
+import org.glassfish.jersey.server.ResourceConfig;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+
 import java.util.UUID;
 import java.util.function.Supplier;
 
 import static net.javacrumbs.jsonunit.assertj.JsonAssertions.assertThatJson;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.CoreMatchers.equalTo;
+import static org.mockito.Mockito.mock;
 
 public class ComponentPropertyResourceTest extends ResourceTest {
 
-    @ClassRule
-    public static JerseyTestRule jersey = new JerseyTestRule(
+    private static final SecretManager secretManager = mock(SecretManager.class);
+
+    @RegisterExtension
+    static JerseyTestExtension jersey = new JerseyTestExtension(
             new ResourceConfig(ComponentPropertyResource.class)
                     .register(ApiFilter.class)
-                    .register(AuthenticationFeature.class));
+                    .register(AuthenticationFeature.class)
+                    .register(AuthorizationFeature.class)
+                    .register(new AbstractBinder() {
+                        @Override
+                        protected void configure() {
+                            bind(secretManager).to(SecretManager.class);
+                        }
+                    }));
 
     @Test
     public void getPropertiesTest() {
+        initializeWithPermissions(Permissions.VIEW_PORTFOLIO);
+
         final var project = new Project();
         project.setName("acme-app");
         qm.persist(project);
@@ -110,6 +126,8 @@ public class ComponentPropertyResourceTest extends ResourceTest {
 
     @Test
     public void getPropertiesInvalidTest() {
+        initializeWithPermissions(Permissions.VIEW_PORTFOLIO);
+
         final Response response = jersey.target("%s/%s/property".formatted(V1_COMPONENT, UUID.randomUUID())).request()
                 .header(X_API_KEY, apiKey)
                 .get(Response.class);
@@ -121,6 +139,7 @@ public class ComponentPropertyResourceTest extends ResourceTest {
 
     @Test
     public void getPropertiesAclTest() {
+        initializeWithPermissions(Permissions.VIEW_PORTFOLIO);
         enablePortfolioAccessControl();
 
         final var project = new Project();
@@ -155,6 +174,8 @@ public class ComponentPropertyResourceTest extends ResourceTest {
 
     @Test
     public void createPropertyTest() {
+        initializeWithPermissions(Permissions.PORTFOLIO_MANAGEMENT_CREATE);
+
         final var project = new Project();
         project.setName("acme-app");
         qm.persist(project);
@@ -192,6 +213,8 @@ public class ComponentPropertyResourceTest extends ResourceTest {
 
     @Test
     public void createPropertyWithoutGroupTest() {
+        initializeWithPermissions(Permissions.PORTFOLIO_MANAGEMENT_CREATE);
+
         final var project = new Project();
         project.setName("acme-app");
         qm.persist(project);
@@ -227,6 +250,8 @@ public class ComponentPropertyResourceTest extends ResourceTest {
 
     @Test
     public void createPropertyDuplicateTest() {
+        initializeWithPermissions(Permissions.PORTFOLIO_MANAGEMENT_CREATE);
+
         final var project = new Project();
         project.setName("acme-app");
         qm.persist(project);
@@ -263,44 +288,9 @@ public class ComponentPropertyResourceTest extends ResourceTest {
     }
 
     @Test
-    public void createPropertyDisallowedPropertyTypeTest() {
-        final var project = new Project();
-        project.setName("acme-app");
-        qm.persist(project);
-
-        final var component = new Component();
-        component.setProject(project);
-        component.setName("acme-lib");
-        qm.persist(component);
-
-        final Response response = jersey.target("%s/%s/property".formatted(V1_COMPONENT, component.getUuid())).request()
-                .header(X_API_KEY, apiKey)
-                .put(Entity.entity("""
-                        {
-                          "groupName": "foo",
-                          "propertyName": "bar",
-                          "propertyValue": "baz",
-                          "propertyType": "ENCRYPTEDSTRING",
-                          "description": "qux"
-                        }
-                        """, MediaType.APPLICATION_JSON));
-
-        assertThat(response.getStatus()).isEqualTo(400);
-        assertThat(response.getHeaderString(TOTAL_COUNT_HEADER)).isNull();
-        assertThatJson(getPlainTextBody(response)).isEqualTo("""
-                [
-                  {
-                    "message": "Encrypted component property values are not supported",
-                    "messageTemplate": "Encrypted component property values are not supported",
-                    "path": "propertyType",
-                    "invalidValue":"ENCRYPTEDSTRING"
-                  }
-                ]
-                """);
-    }
-
-    @Test
     public void createPropertyComponentNotFoundTest() {
+        initializeWithPermissions(Permissions.PORTFOLIO_MANAGEMENT_CREATE);
+
         final var project = new Project();
         project.setName("acme-app");
         qm.persist(project);
@@ -329,6 +319,7 @@ public class ComponentPropertyResourceTest extends ResourceTest {
 
     @Test
     public void createPropertyAclTest() {
+        initializeWithPermissions(Permissions.PORTFOLIO_MANAGEMENT_CREATE);
         enablePortfolioAccessControl();
 
         final var project = new Project();
@@ -371,6 +362,8 @@ public class ComponentPropertyResourceTest extends ResourceTest {
 
     @Test
     public void deletePropertyTest() {
+        initializeWithPermissions(Permissions.PORTFOLIO_MANAGEMENT_DELETE);
+
         final var project = new Project();
         project.setName("acme-app");
         qm.persist(project);
@@ -398,6 +391,7 @@ public class ComponentPropertyResourceTest extends ResourceTest {
 
     @Test
     public void deletePropertyAclTest() {
+        initializeWithPermissions(Permissions.PORTFOLIO_MANAGEMENT_DELETE);
         enablePortfolioAccessControl();
 
         final var project = new Project();

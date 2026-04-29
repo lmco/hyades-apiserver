@@ -18,14 +18,14 @@
  */
 package org.dependencytrack.parser.dependencytrack;
 
-import alpine.common.logging.Logger;
 import com.github.packageurl.MalformedPackageURLException;
 import com.github.packageurl.PackageURL;
 import com.google.protobuf.util.Timestamps;
 import io.github.nscuro.versatile.Constraint;
 import io.github.nscuro.versatile.Vers;
 import io.github.nscuro.versatile.VersException;
-import io.github.nscuro.versatile.version.VersioningScheme;
+import io.github.nscuro.versatile.spi.InvalidVersionException;
+import io.github.nscuro.versatile.spi.Version;
 import org.apache.commons.lang3.StringUtils;
 import org.cyclonedx.proto.v1_6.Bom;
 import org.cyclonedx.proto.v1_6.Component;
@@ -35,16 +35,16 @@ import org.cyclonedx.proto.v1_6.VulnerabilityAffectedVersions;
 import org.cyclonedx.proto.v1_6.VulnerabilityAffects;
 import org.cyclonedx.proto.v1_6.VulnerabilityRating;
 import org.cyclonedx.proto.v1_6.VulnerabilityReference;
-import org.dependencytrack.model.AnalyzerIdentity;
 import org.dependencytrack.model.Severity;
 import org.dependencytrack.model.Vulnerability;
 import org.dependencytrack.model.VulnerabilityAlias;
 import org.dependencytrack.model.VulnerableSoftware;
 import org.dependencytrack.parser.common.resolver.CweResolver;
-import org.dependencytrack.proto.vulnanalysis.v1.Scanner;
 import org.dependencytrack.util.VulnerabilityUtil;
-import us.springett.cvss.Cvss;
-import us.springett.cvss.Score;
+import org.metaeffekt.core.security.cvss.CvssVector;
+import org.metaeffekt.core.security.cvss.processor.BakedCvssVectorScores;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import us.springett.owasp.riskrating.MissingFactorException;
 import us.springett.owasp.riskrating.OwaspRiskRating;
 import us.springett.parsers.cpe.Cpe;
@@ -62,16 +62,20 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Predicate;
+import java.util.regex.Pattern;
 
+import static io.github.nscuro.versatile.version.KnownVersioningSchemes.SCHEME_GENERIC;
 import static org.apache.commons.lang3.StringUtils.trimToNull;
 import static org.cyclonedx.proto.v1_6.ScoreMethod.SCORE_METHOD_CVSSV2;
 import static org.cyclonedx.proto.v1_6.ScoreMethod.SCORE_METHOD_CVSSV3;
 import static org.cyclonedx.proto.v1_6.ScoreMethod.SCORE_METHOD_CVSSV31;
+import static org.cyclonedx.proto.v1_6.ScoreMethod.SCORE_METHOD_CVSSV4;
 import static org.cyclonedx.proto.v1_6.ScoreMethod.SCORE_METHOD_OWASP;
 
 public final class BovModelConverter {
 
-    private static final Logger LOGGER = Logger.getLogger(BovModelConverter.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(BovModelConverter.class);
+    private static final Pattern EFFECTIVELY_ZERO_PATTERN = Pattern.compile("^0(\\.0)*$");
     static final String TITLE_PROPERTY_NAME = "dependency-track:vuln:title";
 
     private BovModelConverter() {
@@ -152,17 +156,37 @@ public final class BovModelConverter {
                 continue;
             }
 
+            if (!appliedMethods.contains(SCORE_METHOD_CVSSV4) && (rating.getMethod().equals(SCORE_METHOD_CVSSV4))) {
+                vuln.setCvssV4Vector(trimToNull(rating.getVector()));
+                vuln.setCvssV4Score(BigDecimal.valueOf(rating.getScore()));
+                if (rating.hasVector()) {
+                    final CvssVector cvss = CvssVector.parseVector(rating.getVector(), true);
+                    if (cvss != null && cvss.isBaseFullyDefined()) {
+                        if (rating.getScore() == 0.0) {
+                            vuln.setCvssV4Score(BigDecimal.valueOf(cvss.getBakedScores().getBaseScore()));
+                        }
+                    } else {
+                        LOGGER.debug("Skipping CVSSv4 score derivation: vector '{}' could not be parsed or has incomplete base metrics", rating.getVector());
+                    }
+                }
+                appliedMethods.add(SCORE_METHOD_CVSSV4);
+            }
             if (!appliedMethods.contains(SCORE_METHOD_CVSSV3)
-                && (rating.getMethod().equals(SCORE_METHOD_CVSSV3) || rating.getMethod().equals(SCORE_METHOD_CVSSV31))) {
+                    && (rating.getMethod().equals(SCORE_METHOD_CVSSV3)
+                    || rating.getMethod().equals(SCORE_METHOD_CVSSV31))) {
                 vuln.setCvssV3Vector(trimToNull(rating.getVector()));
                 vuln.setCvssV3BaseScore(BigDecimal.valueOf(rating.getScore()));
                 if (rating.hasVector()) {
-                    final Cvss cvss = Cvss.fromVector(rating.getVector());
-                    final Score score = cvss.calculateScore();
-                    vuln.setCvssV3ImpactSubScore(BigDecimal.valueOf(score.getImpactSubScore()));
-                    vuln.setCvssV3ExploitabilitySubScore(BigDecimal.valueOf(score.getExploitabilitySubScore()));
-                    if (rating.getScore() == 0.0) {
-                        vuln.setCvssV3BaseScore(BigDecimal.valueOf(score.getBaseScore()));
+                    final CvssVector cvss = CvssVector.parseVector(rating.getVector(), true);
+                    if (cvss != null && cvss.isBaseFullyDefined()) {
+                        final BakedCvssVectorScores scores = cvss.getBakedScores();
+                        vuln.setCvssV3ImpactSubScore(BigDecimal.valueOf(scores.getImpactScore()));
+                        vuln.setCvssV3ExploitabilitySubScore(BigDecimal.valueOf(scores.getExploitabilityScore()));
+                        if (rating.getScore() == 0.0) {
+                            vuln.setCvssV3BaseScore(BigDecimal.valueOf(scores.getBaseScore()));
+                        }
+                    } else {
+                        LOGGER.debug("Skipping CVSSv3 sub-score derivation: vector '{}' could not be parsed or has incomplete base metrics", rating.getVector());
                     }
                 }
                 appliedMethods.add(SCORE_METHOD_CVSSV3);
@@ -171,12 +195,16 @@ public final class BovModelConverter {
                 vuln.setCvssV2Vector(trimToNull(rating.getVector()));
                 vuln.setCvssV2BaseScore(BigDecimal.valueOf(rating.getScore()));
                 if (rating.hasVector()) {
-                    final Cvss cvss = Cvss.fromVector(rating.getVector());
-                    final Score score = cvss.calculateScore();
-                    vuln.setCvssV2ImpactSubScore(BigDecimal.valueOf(score.getImpactSubScore()));
-                    vuln.setCvssV2ExploitabilitySubScore(BigDecimal.valueOf(score.getExploitabilitySubScore()));
-                    if (rating.getScore() == 0.0) {
-                        vuln.setCvssV2BaseScore(BigDecimal.valueOf(score.getBaseScore()));
+                    final CvssVector cvss = CvssVector.parseVector(rating.getVector(), true);
+                    if (cvss != null && cvss.isBaseFullyDefined()) {
+                        final BakedCvssVectorScores scores = cvss.getBakedScores();
+                        vuln.setCvssV2ImpactSubScore(BigDecimal.valueOf(scores.getImpactScore()));
+                        vuln.setCvssV2ExploitabilitySubScore(BigDecimal.valueOf(scores.getExploitabilityScore()));
+                        if (rating.getScore() == 0.0) {
+                            vuln.setCvssV2BaseScore(BigDecimal.valueOf(scores.getBaseScore()));
+                        }
+                    } else {
+                        LOGGER.debug("Skipping CVSSv2 sub-score derivation: vector '{}' could not be parsed or has incomplete base metrics", rating.getVector());
                     }
                 }
                 appliedMethods.add(SCORE_METHOD_CVSSV2);
@@ -199,6 +227,7 @@ public final class BovModelConverter {
                 vuln.getSeverity(),
                 vuln.getCvssV2BaseScore(),
                 vuln.getCvssV3BaseScore(),
+                vuln.getCvssV4Score(),
                 vuln.getOwaspRRLikelihoodScore(),
                 vuln.getOwaspRRTechnicalImpactScore(),
                 vuln.getOwaspRRBusinessImpactScore()
@@ -251,8 +280,8 @@ public final class BovModelConverter {
                             .orElse(null));
             if (component == null) {
                 LOGGER.warn(
-                        "No component in the BOV for %s is matching the BOM ref \"%s\" of the affects node; Skipping"
-                                .formatted(vuln.getId(), bovVulnAffects.getRef()));
+                        "No component in the BOV for {} is matching the BOM ref '{}' of the affects node; Skipping",
+                        vuln.getId(), bovVulnAffects.getRef());
                 continue;
             }
 
@@ -311,15 +340,6 @@ public final class BovModelConverter {
         };
     }
 
-    public static AnalyzerIdentity convert(final Scanner scanner) {
-        return switch (scanner) {
-            case SCANNER_INTERNAL -> AnalyzerIdentity.INTERNAL_ANALYZER;
-            case SCANNER_OSSINDEX -> AnalyzerIdentity.OSSINDEX_ANALYZER;
-            case SCANNER_SNYK -> AnalyzerIdentity.SNYK_ANALYZER;
-            default -> AnalyzerIdentity.NONE;
-        };
-    }
-
     /**
      * Determines the priority of {@link ScoreMethod}s, as used by {@link #compareRatings(Source)}.
      * <p>
@@ -329,10 +349,11 @@ public final class BovModelConverter {
      */
     private static int scoreMethodPriority(final ScoreMethod method) {
         return switch (method) {
-            case SCORE_METHOD_CVSSV31 -> 0;
-            case SCORE_METHOD_CVSSV3 -> 1;
-            case SCORE_METHOD_CVSSV2 -> 2;
-            case SCORE_METHOD_OWASP -> 3;
+            case SCORE_METHOD_CVSSV4 -> 0;
+            case SCORE_METHOD_CVSSV31 -> 1;
+            case SCORE_METHOD_CVSSV3 -> 2;
+            case SCORE_METHOD_CVSSV2 -> 3;
+            case SCORE_METHOD_OWASP -> 4;
             default -> 999;
         };
     }
@@ -373,91 +394,54 @@ public final class BovModelConverter {
     }
 
     private static List<VulnerableSoftware> convertAffectedVersion(
-            final String vulnId,
-            final String affectedVersion,
-            final Component affectedComponent) {
-        final var vsList = new ArrayList<VulnerableSoftware>(2);
-        if (affectedComponent.hasCpe()) {
-            try {
-                final Cpe cpe = CpeParser.parse(affectedComponent.getCpe());
-
-                final var vs = new VulnerableSoftware();
-                vs.setCpe22(cpe.toCpe22Uri());
-                vs.setCpe23(affectedComponent.getCpe());
-                vs.setPart(cpe.getPart().getAbbreviation());
-                vs.setVendor(cpe.getVendor());
-                vs.setProduct(cpe.getProduct());
-                vs.setVersion(affectedVersion);
-                vs.setUpdate(cpe.getUpdate());
-                vs.setEdition(cpe.getEdition());
-                vs.setLanguage(cpe.getLanguage());
-                vs.setSwEdition(cpe.getSwEdition());
-                vs.setTargetSw(cpe.getTargetSw());
-                vs.setTargetHw(cpe.getTargetHw());
-                vs.setOther(cpe.getOther());
-                vs.setVulnerable(true);
-
-                vsList.add(vs);
-            } catch (CpeParsingException e) {
-                LOGGER.warn("Failed to parse CPE %s of %s; Skipping".formatted(
-                        affectedComponent.getCpe(), vulnId), e);
-            } catch (CpeEncodingException e) {
-                LOGGER.warn("Failed to encode CPE %s of %s; Skipping".formatted(
-                        affectedComponent.getCpe(), vulnId), e);
-            }
-        }
-
-        if (affectedComponent.hasPurl()) {
-            try {
-                final PackageURL purl = new PackageURL(affectedComponent.getPurl());
-
-                final var vs = new VulnerableSoftware();
-                vs.setPurlType(purl.getType());
-                vs.setPurlNamespace(purl.getNamespace());
-                vs.setPurlName(purl.getName());
-                vs.setPurl(purl.canonicalize());
-                vs.setVersion(affectedVersion);
-                vs.setVulnerable(true);
-
-                vsList.add(vs);
-            } catch (MalformedPackageURLException e) {
-                LOGGER.warn("Failed to parse PURL from \"%s\" for %s; Skipping".formatted(
-                        affectedComponent.getPurl(), vulnId), e);
-            }
-        }
-
-        return vsList;
+            String vulnId,
+            String affectedVersion,
+            Component affectedComponent) {
+        return createVulnerableSoftware(vulnId, affectedComponent, affectedVersion, null, null, null, null);
     }
 
     private static List<VulnerableSoftware> convertAffectedVersionRange(
-            final String vulnId,
-            final String affectedVersionRange,
-            final Component affectedComponent) {
+            String vulnId,
+            String affectedVersionRange,
+            Component affectedComponent) {
         final List<VulnerableSoftware> vsList = new ArrayList<>();
         final List<Vers> versList;
         try {
             versList = convertRangeToVersList(affectedVersionRange);
         } catch (VersException e) {
             LOGGER.warn(
-                    "Failed to parse vers range from \"%s\" for %s".formatted(
-                            affectedVersionRange, vulnId), e);
+                    "Failed to parse vers range from '{}' for {}",
+                    affectedVersionRange, vulnId, e);
             return vsList;
         }
 
         for (final Vers vers : versList) {
             if (vers.constraints().isEmpty()) {
                 LOGGER.debug(
-                        "Vers range \"%s\" (parsed: %s) for %s does not contain any constraints; Skipping".formatted(
-                                affectedVersionRange, vers, vulnId));
+                        "Vers range '{}' (parsed: {}) for {} does not contain any constraints; Skipping",
+                        affectedVersionRange, vers, vulnId);
                 continue;
             } else if (vers.constraints().size() == 1) {
-                var versConstraint = vers.constraints().getFirst();
-                if (versConstraint.comparator() == io.github.nscuro.versatile.Comparator.WILDCARD) {
-                    // Wildcards in VulnerableSoftware can be represented via either:
-                    //   * version=*, or
-                    //   * versionStartIncluding=0
-                    // We choose the more explicit first option.
-                    vsList.addAll(convertAffectedVersion(vulnId, "*", affectedComponent));
+                final var versConstraint = vers.constraints().getFirst();
+                if (versConstraint.comparator() == io.github.nscuro.versatile.Comparator.WILDCARD
+                        || (versConstraint.comparator() == io.github.nscuro.versatile.Comparator.GREATER_THAN_OR_EQUAL
+                        && isEffectivelyZero(versConstraint.version()))) {
+                    // Wildcards and ">=0" mean "all versions".
+                    // Represent as versionStartIncluding=0 to use the range matching logic.
+                    vsList.addAll(createVulnerableSoftware(
+                            vulnId, affectedComponent, null, "0", null, null, null));
+                    continue;
+                }
+                if (versConstraint.comparator() == io.github.nscuro.versatile.Comparator.GREATER_THAN
+                        && isEffectivelyZero(versConstraint.version())) {
+                    // ">0" means all versions except version 0.
+                    vsList.addAll(createVulnerableSoftware(
+                            vulnId, affectedComponent, null, null, "0", null, null));
+                    continue;
+                }
+                if (versConstraint.comparator() == io.github.nscuro.versatile.Comparator.EQUAL) {
+                    vsList.addAll(convertAffectedVersion(
+                            vulnId, versConstraint.version().toString(), affectedComponent));
                     continue;
                 }
             }
@@ -468,68 +452,95 @@ public final class BovModelConverter {
 
     static List<Vers> convertRangeToVersList(String range) {
         try {
-            Vers parsedVers = Vers.parse(range);
-            // Calling split to address ranges with all possible length of constraints
-            return parsedVers.validate().split();
-        } catch (VersException versException) {
-            if (versException.getMessage().contains("invalid versioning scheme")) {
-                // Fall back the invalid versioning scheme to 'generic' and reparse
-                String[] rangeParts = range.split(":", 2);
-                String[] versions = rangeParts[1].split("/", 2);
-                var genericRange = rangeParts[0] + ":" + VersioningScheme.GENERIC.name().toLowerCase() + "/" + versions[1];
-                return convertRangeToVersList(genericRange);
-            } else {
-                throw versException;
+            return Vers.parse(range).validate().split();
+        } catch (InvalidVersionException e) {
+            String[] rangeParts = range.split(":", 2);
+            if (SCHEME_GENERIC.equals(rangeParts[0])) {
+                LOGGER.warn("""
+                        Range '{}' could not be parsed because one or more versions \
+                        do not comply with the versioning scheme's rules; Skipping""", range, e);
+                return Collections.emptyList();
             }
+
+            LOGGER.warn("""
+                    Range '{}' could not be parsed because one or more versions \
+                    do not comply with the versioning scheme's rules; \
+                    Falling back to versioning scheme 'generic' instead""", range, e);
+            String[] versions = rangeParts[1].split("/", 2);
+            var genericRange = rangeParts[0] + ":" + SCHEME_GENERIC + "/" + versions[1];
+            return convertRangeToVersList(genericRange);
         }
     }
 
     private static List<VulnerableSoftware> convertVersToVulnerableSoftware(
-            final Vers vers,
-            final String vulnId,
-            final Component affectedComponent) {
+            Vers vers,
+            String vulnId,
+            Component affectedComponent) {
+        final var vsList = new ArrayList<VulnerableSoftware>();
+        final var exactVersions = new ArrayList<String>();
+
         String versionStartIncluding = null;
         String versionStartExcluding = null;
         String versionEndIncluding = null;
         String versionEndExcluding = null;
 
         for (final Constraint constraint : vers.constraints()) {
-            if (constraint.version() == null
-                || constraint.version().toString().equals("0")
-                || constraint.version().toString().equals("*")) {
-                // Semantically, ">=0" is equivalent to versionStartIncluding=null,
-                // and ">0" is equivalent to versionStartExcluding=null.
-                //
-                // "<0", "<=0", and "=0" can be normalized to versionStartIncluding=null.
-                //
-                // "*" is a wildcard and can only be used on its own, without any comparator.
-                // The Vers parsing / validation performed above will thus fail for ranges like "vers:generic/>=*".
+            if (constraint.version() == null) {
                 continue;
             }
 
+            final String versionStr = constraint.version().toString();
+
             switch (constraint.comparator()) {
-                case GREATER_THAN -> versionStartExcluding = String.valueOf(constraint.version());
-                case GREATER_THAN_OR_EQUAL -> versionStartIncluding = String.valueOf(constraint.version());
-                case LESS_THAN_OR_EQUAL -> versionEndIncluding = String.valueOf(constraint.version());
-                case LESS_THAN -> versionEndExcluding = String.valueOf(constraint.version());
+                case GREATER_THAN -> versionStartExcluding = versionStr;
+                case GREATER_THAN_OR_EQUAL -> {
+                    // Normalize ">=0" variants to "0" for consistency.
+                    versionStartIncluding = isEffectivelyZero(constraint.version()) ? "0" : versionStr;
+                }
+                case LESS_THAN_OR_EQUAL -> versionEndIncluding = versionStr;
+                case LESS_THAN -> versionEndExcluding = versionStr;
+                case EQUAL -> exactVersions.add(versionStr);
                 default -> LOGGER.warn(
-                        "Encountered unexpected comparator %s in %s for %s; Skipping".formatted(
-                                constraint.comparator(), vers, vulnId));
+                        "Encountered unexpected comparator {} in '{}' for {}; Skipping",
+                        constraint.comparator(), vers, vulnId);
             }
         }
 
-        if (versionStartIncluding == null && versionStartExcluding == null
-            && versionEndIncluding == null && versionEndExcluding == null) {
-            LOGGER.warn("Unable to assemble a version range from %s for %s".formatted(vers, vulnId));
-            return Collections.emptyList();
-        }
-        if ((versionStartIncluding != null || versionStartExcluding != null)
-            && (versionEndIncluding == null && versionEndExcluding == null)) {
-            LOGGER.warn("Skipping indefinite version range assembled from %s for %s".formatted(vers, vulnId));
-            return Collections.emptyList();
+        for (final String exactVersion : exactVersions) {
+            vsList.addAll(createVulnerableSoftware(
+                    vulnId, affectedComponent, exactVersion, null, null, null, null));
         }
 
+        if (versionStartIncluding != null || versionStartExcluding != null
+                || versionEndIncluding != null || versionEndExcluding != null) {
+            vsList.addAll(createVulnerableSoftware(vulnId, affectedComponent, null,
+                    versionStartIncluding, versionStartExcluding, versionEndIncluding, versionEndExcluding));
+        }
+
+        if (vsList.isEmpty()) {
+            LOGGER.warn("Unable to assemble a version range from '{}' for {}", vers, vulnId);
+        }
+
+        return vsList;
+    }
+
+    private static boolean isEffectivelyZero(Version version) {
+        if (version == null) {
+            return false;
+        }
+        return EFFECTIVELY_ZERO_PATTERN.matcher(version.toString()).matches();
+    }
+
+    private static List<VulnerableSoftware> createVulnerableSoftware(
+            String vulnId,
+            Component affectedComponent,
+            String version,
+            String versionStartIncluding,
+            String versionStartExcluding,
+            String versionEndIncluding,
+            String versionEndExcluding) {
         final var vsList = new ArrayList<VulnerableSoftware>(2);
+
         if (affectedComponent.hasCpe()) {
             try {
                 final Cpe cpe = CpeParser.parse(affectedComponent.getCpe());
@@ -540,7 +551,7 @@ public final class BovModelConverter {
                 vs.setPart(cpe.getPart().getAbbreviation());
                 vs.setVendor(cpe.getVendor());
                 vs.setProduct(cpe.getProduct());
-                vs.setVersion(cpe.getVersion());
+                vs.setVersion(version != null ? version : cpe.getVersion());
                 vs.setUpdate(cpe.getUpdate());
                 vs.setEdition(cpe.getEdition());
                 vs.setLanguage(cpe.getLanguage());
@@ -548,21 +559,24 @@ public final class BovModelConverter {
                 vs.setTargetSw(cpe.getTargetSw());
                 vs.setTargetHw(cpe.getTargetHw());
                 vs.setOther(cpe.getOther());
-                vs.setVersionStartExcluding(versionStartExcluding);
                 vs.setVersionStartIncluding(versionStartIncluding);
-                vs.setVersionEndExcluding(versionEndExcluding);
+                vs.setVersionStartExcluding(versionStartExcluding);
                 vs.setVersionEndIncluding(versionEndIncluding);
+                vs.setVersionEndExcluding(versionEndExcluding);
                 vs.setVulnerable(true);
 
                 vsList.add(vs);
             } catch (CpeParsingException e) {
-                LOGGER.warn("Failed to parse CPE %s of %s; Skipping".formatted(
-                        affectedComponent.getCpe(), vulnId), e);
+                LOGGER.warn(
+                        "Failed to parse CPE '{}' of {}; Skipping",
+                        affectedComponent.getCpe(), vulnId, e);
             } catch (CpeEncodingException e) {
-                LOGGER.warn("Failed to encode CPE %s of %s; Skipping".formatted(
-                        affectedComponent.getCpe(), vulnId), e);
+                LOGGER.warn(
+                        "Failed to encode CPE '{}' of {}; Skipping",
+                        affectedComponent.getCpe(), vulnId, e);
             }
         }
+
         if (affectedComponent.hasPurl()) {
             try {
                 final PackageURL purl = new PackageURL(affectedComponent.getPurl());
@@ -571,18 +585,20 @@ public final class BovModelConverter {
                 vs.setPurlType(purl.getType());
                 vs.setPurlNamespace(purl.getNamespace());
                 vs.setPurlName(purl.getName());
+                vs.setPurlVersion(purl.getVersion());
                 vs.setPurl(purl.canonicalize());
-                vs.setVersionStartExcluding(versionStartExcluding);
+                vs.setVersion(version);
                 vs.setVersionStartIncluding(versionStartIncluding);
-                vs.setVersionEndExcluding(versionEndExcluding);
+                vs.setVersionStartExcluding(versionStartExcluding);
                 vs.setVersionEndIncluding(versionEndIncluding);
+                vs.setVersionEndExcluding(versionEndExcluding);
                 vs.setVulnerable(true);
 
                 vsList.add(vs);
             } catch (MalformedPackageURLException e) {
                 LOGGER.warn(
-                        "Failed to parse PURL from \"%s\" for %s; Skipping".formatted(
-                                affectedComponent.getPurl(), vulnId), e);
+                        "Failed to parse PURL from '{}' for {}; Skipping",
+                        affectedComponent.getPurl(), vulnId, e);
             }
         }
 

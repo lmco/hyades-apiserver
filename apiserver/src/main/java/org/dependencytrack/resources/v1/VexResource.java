@@ -18,7 +18,6 @@
  */
 package org.dependencytrack.resources.v1;
 
-import alpine.common.logging.Logger;
 import alpine.event.framework.Event;
 import alpine.server.auth.PermissionRequired;
 import io.swagger.v3.oas.annotations.Operation;
@@ -30,10 +29,22 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Validator;
+import jakarta.ws.rs.Consumes;
+import jakarta.ws.rs.GET;
+import jakarta.ws.rs.POST;
+import jakarta.ws.rs.PUT;
+import jakarta.ws.rs.Path;
+import jakarta.ws.rs.PathParam;
+import jakarta.ws.rs.Produces;
+import jakarta.ws.rs.QueryParam;
+import jakarta.ws.rs.core.MediaType;
+import jakarta.ws.rs.core.Response;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.io.input.BOMInputStream;
 import org.apache.commons.lang3.StringUtils;
 import org.cyclonedx.CycloneDxMediaType;
+import org.cyclonedx.Version;
 import org.cyclonedx.exception.GeneratorException;
 import org.dependencytrack.auth.Permissions;
 import org.dependencytrack.event.VexUploadEvent;
@@ -49,23 +60,14 @@ import org.dependencytrack.resources.v1.vo.VexSubmitRequest;
 import org.glassfish.jersey.media.multipart.BodyPartEntity;
 import org.glassfish.jersey.media.multipart.FormDataBodyPart;
 import org.glassfish.jersey.media.multipart.FormDataParam;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import jakarta.validation.Validator;
-import jakarta.ws.rs.Consumes;
-import jakarta.ws.rs.GET;
-import jakarta.ws.rs.POST;
-import jakarta.ws.rs.PUT;
-import jakarta.ws.rs.Path;
-import jakarta.ws.rs.PathParam;
-import jakarta.ws.rs.Produces;
-import jakarta.ws.rs.QueryParam;
-import jakarta.ws.rs.core.MediaType;
-import jakarta.ws.rs.core.Response;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Base64;
-import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * JAX-RS resources for processing VEX documents.
@@ -81,7 +83,8 @@ import java.util.List;
 })
 public class VexResource extends AbstractApiResource {
 
-    private static final Logger LOGGER = Logger.getLogger(VexResource.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(VexResource.class);
+    private static final String DEFAULT_EXPORT_VERSION = "1.5";
 
     @GET
     @Path("/cyclonedx/project/{uuid}")
@@ -111,8 +114,17 @@ public class VexResource extends AbstractApiResource {
             @Parameter(description = "The UUID of the project to export", schema = @Schema(type = "string", format = "uuid"), required = true)
             @PathParam("uuid") @ValidUuid String uuid,
             @Parameter(description = "Force the resulting VEX to be downloaded as a file (defaults to 'false')")
-            @QueryParam("download") boolean download) {
+            @QueryParam("download") boolean download,
+            @Parameter(description = "The CycloneDX Spec variant exported (defaults to: '" + DEFAULT_EXPORT_VERSION + "')")
+            @QueryParam("version") String version
+    ) {
         try (QueryManager qm = new QueryManager()) {
+            String versionParameter =  Objects.toString(StringUtils.trimToNull(version), DEFAULT_EXPORT_VERSION);
+            Version cdxOutputVersion = Version.fromVersionString(versionParameter);
+            if(cdxOutputVersion == null) {
+                return Response.status(Response.Status.BAD_REQUEST).entity("Invalid CycloneDX version specified.").build();
+            }
+
             final Project project = qm.getObjectByUuid(Project.class, uuid);
             if (project == null) {
                 return Response.status(Response.Status.NOT_FOUND).entity("The project could not be found.").build();
@@ -123,10 +135,10 @@ public class VexResource extends AbstractApiResource {
 
             try {
                 if (download) {
-                    return Response.ok(exporter.export(exporter.create(project), CycloneDXExporter.Format.JSON), MediaType.APPLICATION_OCTET_STREAM)
+                    return Response.ok(exporter.export(exporter.create(project), CycloneDXExporter.Format.JSON, cdxOutputVersion), MediaType.APPLICATION_OCTET_STREAM)
                             .header("content-disposition", "attachment; filename=\"" + project.getUuid() + "-vex.cdx.json\"").build();
                 } else {
-                    return Response.ok(exporter.export(exporter.create(project), CycloneDXExporter.Format.JSON),
+                    return Response.ok(exporter.export(exporter.create(project), CycloneDXExporter.Format.JSON, cdxOutputVersion),
                             CycloneDxMediaType.APPLICATION_CYCLONEDX_JSON).build();
                 }
             } catch (GeneratorException e) {
@@ -276,11 +288,20 @@ public class VexResource extends AbstractApiResource {
     private Response process(QueryManager qm, Project project, String encodedVexData) {
         if (project != null) {
             requireAccess(qm, project);
+            if (project.getCollectionLogic() != null) {
+                return Response
+                        .status(Response.Status.BAD_REQUEST)
+                        .entity("VEX cannot be uploaded to a collection project.")
+                        .build();
+            }
             final byte[] decoded = Base64.getDecoder().decode(encodedVexData);
             BomResource.validate(decoded, project);
             final VexUploadEvent vexUploadEvent = new VexUploadEvent(project.getUuid(), decoded);
             Event.dispatch(vexUploadEvent);
-            return Response.ok(Collections.singletonMap("token", vexUploadEvent.getChainIdentifier())).build();
+
+            final var bomUploadResponse = new BomUploadResponse(
+                    vexUploadEvent.getChainIdentifier(), project.getUuid());
+            return Response.ok(bomUploadResponse).build();
         } else {
             return Response.status(Response.Status.NOT_FOUND).entity("The project could not be found.").build();
         }
@@ -294,12 +315,21 @@ public class VexResource extends AbstractApiResource {
             final BodyPartEntity bodyPartEntity = (BodyPartEntity) artifactPart.getEntity();
             if (project != null) {
                 requireAccess(qm, project);
+                if (project.getCollectionLogic() != null) {
+                    return Response
+                            .status(Response.Status.BAD_REQUEST)
+                            .entity("VEX cannot be uploaded to a collection project.")
+                            .build();
+                }
                 try (InputStream in = bodyPartEntity.getInputStream()) {
                     final byte[] content = IOUtils.toByteArray(new BOMInputStream((in)));
                     BomResource.validate(content, project);
                     final VexUploadEvent vexUploadEvent = new VexUploadEvent(project.getUuid(), content);
                     Event.dispatch(vexUploadEvent);
-                    return Response.ok(Collections.singletonMap("token", vexUploadEvent.getChainIdentifier())).build();
+
+                    final var bomUploadResponse = new BomUploadResponse(
+                            vexUploadEvent.getChainIdentifier(), project.getUuid());
+                    return Response.ok(bomUploadResponse).build();
                 } catch (IOException e) {
                     return Response.status(Response.Status.BAD_REQUEST).build();
                 }

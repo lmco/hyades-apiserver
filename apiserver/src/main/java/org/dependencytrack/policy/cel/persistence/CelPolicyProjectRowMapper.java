@@ -20,7 +20,9 @@ package org.dependencytrack.policy.cel.persistence;
 
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.google.protobuf.util.JsonFormat;
+import org.dependencytrack.common.Mappers;
 import org.dependencytrack.model.mapping.PolicyProtoMapper;
 import org.dependencytrack.persistence.jdbi.mapping.RowMapperUtil;
 import org.dependencytrack.proto.policy.v1.Project;
@@ -37,11 +39,12 @@ import java.util.Collections;
 import java.util.List;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
-import static org.dependencytrack.persistence.jdbi.mapping.RowMapperUtil.OBJECT_MAPPER;
-import static org.dependencytrack.persistence.jdbi.mapping.RowMapperUtil.hasColumn;
 import static org.dependencytrack.persistence.jdbi.mapping.RowMapperUtil.maybeSet;
 
-public class CelPolicyProjectRowMapper implements RowMapper<Project> {
+public final class CelPolicyProjectRowMapper implements RowMapper<Project> {
+
+    private static final JsonFormat.Parser PROPERTY_JSON_PARSER =
+            JsonFormat.parser().ignoringUnknownFields();
 
     @Override
     public Project map(final ResultSet rs, final StatementContext ctx) throws SQLException {
@@ -59,35 +62,27 @@ public class CelPolicyProjectRowMapper implements RowMapper<Project> {
         maybeSet(rs, "properties", CelPolicyProjectRowMapper::maybeConvertProperties, builder::addAllProperties);
 
         final Project.Metadata.Builder metadataBuilder = Project.Metadata.newBuilder();
-        if (hasColumn(rs, "metadata_tools")) {
-            metadataBuilder.setTools(convertMetadataTools(rs));
-        }
-        if (hasColumn(rs, "inactive_since")) {
-            builder.setIsActive(convertInactiveSince(rs));
-        }
+        maybeSet(rs, "metadata_tools", CelPolicyProjectRowMapper::convertMetadataTools, metadataBuilder::setTools);
+        maybeSet(rs, "inactive_since", CelPolicyProjectRowMapper::convertInactiveSince, builder::setIsActive);
         maybeSet(rs, "bom_generated", RowMapperUtil::nullableTimestamp, metadataBuilder::setBomGenerated);
         builder.setMetadata(metadataBuilder.build());
 
         return builder.build();
     }
 
-    private static boolean convertInactiveSince(final ResultSet rs) throws SQLException {
-        final var jsonInactiveSince = rs.getTimestamp("inactive_since");
-        if (jsonInactiveSince == null) {
-            return true;
-        }
-        return false;
+    private static Boolean convertInactiveSince(ResultSet rs, String columnName) throws SQLException {
+        return rs.getTimestamp(columnName) == null;
     }
 
-    private static Tools convertMetadataTools(final ResultSet rs) throws SQLException {
-        final String jsonString = rs.getString("metadata_tools");
+    private static Tools convertMetadataTools(ResultSet rs, String columnName) throws SQLException {
+        final String jsonString = rs.getString(columnName);
         if (isBlank(jsonString)) {
             return Tools.getDefaultInstance();
         }
 
         final org.dependencytrack.model.Tools modelTools;
         try {
-            modelTools = OBJECT_MAPPER.readValue(jsonString, org.dependencytrack.model.Tools.class);
+            modelTools = Mappers.jsonMapper().readValue(jsonString, org.dependencytrack.model.Tools.class);
         } catch (IOException e) {
             throw new UnableToProduceResultException(e);
         }
@@ -116,17 +111,16 @@ public class CelPolicyProjectRowMapper implements RowMapper<Project> {
         // We can't use Jackson's ObjectMapper to deserialize directly to Protobuf objects.
         // Instead, use Jackson's streaming API to iterate over the array, and deserialize individual objects.
         final var properties = new ArrayList<Project.Property>();
-        try (final JsonParser jsonParser = OBJECT_MAPPER.createParser(jsonString)) {
-            JsonToken currentToken = jsonParser.nextToken(); // Position cursor at first token.
-            if (currentToken != JsonToken.START_ARRAY) {
+        try (final JsonParser jsonParser = Mappers.jsonMapper().createParser(jsonString)) {
+            if (jsonParser.nextToken() != JsonToken.START_ARRAY) {
                 return Collections.emptyList();
             }
 
             while (jsonParser.nextToken() != JsonToken.END_ARRAY) {
-                currentToken = jsonParser.nextToken();
-                if (currentToken == JsonToken.START_OBJECT) {
+                if (jsonParser.currentToken() == JsonToken.START_OBJECT) {
+                    final JsonNode objectNode = jsonParser.readValueAsTree();
                     final var builder = Project.Property.newBuilder();
-                    JsonFormat.parser().merge(jsonParser.getValueAsString(), builder);
+                    PROPERTY_JSON_PARSER.merge(objectNode.toString(), builder);
                     properties.add(builder.build());
                 } else {
                     jsonParser.skipChildren();

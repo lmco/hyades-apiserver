@@ -18,10 +18,14 @@
  */
 package org.dependencytrack.parser.cyclonedx.util;
 
-import alpine.common.logging.Logger;
+import alpine.config.AlpineConfigKeys;
 import alpine.model.IConfigProperty;
 import com.github.packageurl.MalformedPackageURLException;
 import com.github.packageurl.PackageURL;
+import jakarta.json.Json;
+import jakarta.json.JsonArray;
+import jakarta.json.JsonObject;
+import jakarta.json.JsonValue;
 import org.apache.commons.collections4.MultiValuedMap;
 import org.apache.commons.collections4.multimap.HashSetValuedHashMap;
 import org.apache.commons.lang3.StringUtils;
@@ -57,15 +61,15 @@ import org.dependencytrack.model.Tools;
 import org.dependencytrack.model.Vulnerability;
 import org.dependencytrack.parser.common.resolver.CweResolver;
 import org.dependencytrack.parser.cyclonedx.CycloneDXExporter;
+import org.dependencytrack.parser.spdx.expression.SpdxExpression;
 import org.dependencytrack.parser.spdx.expression.SpdxExpressionParser;
-import org.dependencytrack.parser.spdx.expression.model.SpdxExpression;
 import org.dependencytrack.persistence.QueryManager;
 import org.dependencytrack.util.VulnerabilityUtil;
+import org.eclipse.microprofile.config.Config;
+import org.eclipse.microprofile.config.ConfigProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import jakarta.json.Json;
-import jakarta.json.JsonArray;
-import jakarta.json.JsonObject;
-import jakarta.json.JsonValue;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -90,7 +94,7 @@ import static org.dependencytrack.util.PurlUtil.silentPurlCoordinatesOnly;
 
 public class ModelConverter {
 
-    private static final Logger LOGGER = Logger.getLogger(ModelConverter.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(ModelConverter.class);
 
     /**
      * Private Constructor.
@@ -268,15 +272,14 @@ public class ModelConverter {
             final Expression licenseExpression = cdxComponent.getLicenses().getExpression();
             if (licenseExpression != null && isNotBlank(licenseExpression.getValue())) {
                 // If the expression consists of just one license ID, add it as another option.
-                final var expressionParser = new SpdxExpressionParser();
-                final SpdxExpression expression = expressionParser.parse(licenseExpression.getValue());
-                if (!SpdxExpression.INVALID.equals(expression)) {
+                final SpdxExpression expression = SpdxExpressionParser.getInstance().tryParse(licenseExpression.getValue());
+                if (expression != null) {
                     component.setLicenseExpression(trim(licenseExpression.getValue()));
 
-                    if (expression.getSpdxLicenseId() != null) {
+                    if (expression instanceof SpdxExpression.Identifier(String id)) {
                         final var expressionLicense = new org.cyclonedx.model.License();
-                        expressionLicense.setId(expression.getSpdxLicenseId());
-                        expressionLicense.setName(expression.getSpdxLicenseId());
+                        expressionLicense.setId(id);
+                        expressionLicense.setName(id);
                         licenseCandidates.add(expressionLicense);
                     }
                 } else {
@@ -781,12 +784,6 @@ public class ModelConverter {
 
         final List<org.cyclonedx.model.Property> cdxProperties = new ArrayList<>();
         for (final T dtProperty : dtProperties) {
-            if (dtProperty.getPropertyType() == IConfigProperty.PropertyType.ENCRYPTEDSTRING) {
-                // We treat encrypted properties as internal.
-                // They shall not be leaked when exporting.
-                continue;
-            }
-
             final var cdxProperty = new org.cyclonedx.model.Property();
             if (dtProperty.getGroupName() == null) {
                 cdxProperty.setName(dtProperty.getPropertyName());
@@ -804,8 +801,9 @@ public class ModelConverter {
         final org.cyclonedx.model.Metadata metadata = new org.cyclonedx.model.Metadata();
         final org.cyclonedx.model.Tool tool = new org.cyclonedx.model.Tool();
         tool.setVendor("OWASP");
-        tool.setName(alpine.Config.getInstance().getApplicationName());
-        tool.setVersion(alpine.Config.getInstance().getApplicationVersion());
+        final Config config = ConfigProvider.getConfig();
+        tool.setName(config.getValue(AlpineConfigKeys.BUILD_INFO_APPLICATION_NAME, String.class));
+        tool.setVersion(config.getValue(AlpineConfigKeys.BUILD_INFO_APPLICATION_VERSION, String.class));
         metadata.setTools(Collections.singletonList(tool));
         if (project != null) {
             metadata.setManufacture(convert(project.getManufacturer()));
@@ -940,6 +938,7 @@ public class ModelConverter {
         org.cyclonedx.model.vulnerability.Vulnerability.Source cdxSource = new org.cyclonedx.model.vulnerability.Vulnerability.Source();
         cdxSource.setName(vulnerability.getSource());
         cdxVulnerability.setSource(convertDtVulnSourceToCdxVulnSource(Vulnerability.Source.valueOf(vulnerability.getSource())));
+
         if (vulnerability.getCvssV2BaseScore() != null) {
             org.cyclonedx.model.vulnerability.Vulnerability.Rating rating = new org.cyclonedx.model.vulnerability.Vulnerability.Rating();
             rating.setSource(convertDtVulnSourceToCdxVulnSource(Vulnerability.Source.valueOf(vulnerability.getSource())));
@@ -976,6 +975,22 @@ public class ModelConverter {
             }
             cdxVulnerability.addRating(rating);
         }
+        if (vulnerability.getCvssV4Score() != null) {
+            org.cyclonedx.model.vulnerability.Vulnerability.Rating rating = new org.cyclonedx.model.vulnerability.Vulnerability.Rating();
+            rating.setSource(convertDtVulnSourceToCdxVulnSource(Vulnerability.Source.valueOf(vulnerability.getSource())));
+            rating.setScore(vulnerability.getCvssV4Score().doubleValue());
+            rating.setVector(vulnerability.getCvssV4Vector());
+            if (rating.getScore() >= 9.0) {
+                rating.setSeverity(org.cyclonedx.model.vulnerability.Vulnerability.Rating.Severity.CRITICAL);
+            } else if (rating.getScore() >= 7.0) {
+                rating.setSeverity(org.cyclonedx.model.vulnerability.Vulnerability.Rating.Severity.HIGH);
+            } else if (rating.getScore() >= 4.0) {
+                rating.setSeverity(org.cyclonedx.model.vulnerability.Vulnerability.Rating.Severity.MEDIUM);
+            } else {
+                rating.setSeverity(org.cyclonedx.model.vulnerability.Vulnerability.Rating.Severity.LOW);
+            }
+            cdxVulnerability.addRating(rating);
+        }
         if (vulnerability.getOwaspRRLikelihoodScore() != null && vulnerability.getOwaspRRTechnicalImpactScore() != null && vulnerability.getOwaspRRBusinessImpactScore() != null) {
             org.cyclonedx.model.vulnerability.Vulnerability.Rating rating = new org.cyclonedx.model.vulnerability.Vulnerability.Rating();
             rating.setSeverity(convertDtSeverityToCdxSeverity(VulnerabilityUtil.normalizedOwaspRRScore(vulnerability.getOwaspRRLikelihoodScore().doubleValue(), vulnerability.getOwaspRRTechnicalImpactScore().doubleValue(), vulnerability.getOwaspRRBusinessImpactScore().doubleValue())));
@@ -984,7 +999,7 @@ public class ModelConverter {
             rating.setVector(vulnerability.getOwaspRRVector());
             cdxVulnerability.addRating(rating);
         }
-        if (vulnerability.getCvssV2BaseScore() == null && vulnerability.getCvssV3BaseScore() == null && vulnerability.getOwaspRRLikelihoodScore() == null) {
+        if (vulnerability.getCvssV2BaseScore() == null && vulnerability.getCvssV3BaseScore() == null && vulnerability.getCvssV4Score() == null && vulnerability.getOwaspRRLikelihoodScore() == null) {
             org.cyclonedx.model.vulnerability.Vulnerability.Rating rating = new org.cyclonedx.model.vulnerability.Vulnerability.Rating();
             rating.setSeverity(convertDtSeverityToCdxSeverity(vulnerability.getSeverity()));
             rating.setSource(convertDtVulnSourceToCdxVulnSource(Vulnerability.Source.valueOf(vulnerability.getSource())));

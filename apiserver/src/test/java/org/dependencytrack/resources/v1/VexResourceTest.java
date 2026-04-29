@@ -20,30 +20,33 @@ package org.dependencytrack.resources.v1;
 
 import alpine.server.filters.ApiFilter;
 import alpine.server.filters.AuthenticationFeature;
+import alpine.server.filters.AuthorizationFeature;
 import com.fasterxml.jackson.core.StreamReadConstraints;
 import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import net.javacrumbs.jsonunit.core.Option;
-import org.dependencytrack.JerseyTestRule;
+import org.dependencytrack.JerseyTestExtension;
 import org.dependencytrack.ResourceTest;
 import org.dependencytrack.auth.Permissions;
 import org.dependencytrack.model.AnalysisResponse;
 import org.dependencytrack.model.AnalysisState;
-import org.dependencytrack.model.AnalyzerIdentity;
 import org.dependencytrack.model.BomValidationMode;
 import org.dependencytrack.model.Classifier;
 import org.dependencytrack.model.Component;
 import org.dependencytrack.model.Project;
+import org.dependencytrack.model.ProjectCollectionLogic;
 import org.dependencytrack.model.Severity;
 import org.dependencytrack.model.Vulnerability;
 import org.dependencytrack.parser.cyclonedx.CycloneDxValidator;
-import org.dependencytrack.persistence.jdbi.AnalysisDao;
+import org.dependencytrack.persistence.command.MakeAnalysisCommand;
 import org.glassfish.jersey.media.multipart.MultiPartFeature;
 import org.glassfish.jersey.server.ResourceConfig;
-import org.junit.Before;
-import org.junit.ClassRule;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.Base64;
 import java.util.Collections;
@@ -56,19 +59,19 @@ import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.dependencytrack.model.ConfigPropertyConstants.BOM_VALIDATION_MODE;
 import static org.dependencytrack.model.ConfigPropertyConstants.BOM_VALIDATION_TAGS_EXCLUSIVE;
 import static org.dependencytrack.model.ConfigPropertyConstants.BOM_VALIDATION_TAGS_INCLUSIVE;
-import static org.dependencytrack.persistence.jdbi.JdbiFactory.withJdbiHandle;
 import static org.hamcrest.CoreMatchers.equalTo;
 
 public class VexResourceTest extends ResourceTest {
 
-    @ClassRule
-    public static JerseyTestRule jersey = new JerseyTestRule(
+    @RegisterExtension
+    static JerseyTestExtension jersey = new JerseyTestExtension(
             new ResourceConfig(VexResource.class)
                     .register(ApiFilter.class)
                     .register(AuthenticationFeature.class)
+                    .register(AuthorizationFeature.class)
                     .register(MultiPartFeature.class));
 
-    @Before
+    @BeforeEach
     @Override
     public void before() throws Exception {
         super.before();
@@ -76,6 +79,8 @@ public class VexResourceTest extends ResourceTest {
 
     @Test
     public void exportProjectAsCycloneDxTest() {
+        initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS_READ);
+
         var vulnA = new Vulnerability();
         vulnA.setVulnId("INT-001");
         vulnA.setSource(Vulnerability.Source.INTERNAL);
@@ -107,7 +112,7 @@ public class VexResourceTest extends ResourceTest {
         componentWithVuln.setVersion("1.0.0");
         componentWithVuln.setDirectDependencies("[]");
         qm.createComponent(componentWithVuln, false);
-        qm.addVulnerability(vulnA, componentWithVuln, AnalyzerIdentity.INTERNAL_ANALYZER);
+        qm.addVulnerability(vulnA, componentWithVuln, "internal");
 
         var componentWithVulnAndAnalysis = new Component();
         componentWithVulnAndAnalysis.setProject(project);
@@ -115,9 +120,12 @@ public class VexResourceTest extends ResourceTest {
         componentWithVulnAndAnalysis.setVersion("1.0.0");
         componentWithVulnAndAnalysis.setDirectDependencies("[]");
         qm.createComponent(componentWithVulnAndAnalysis, false);
-        qm.addVulnerability(vulnB, componentWithVulnAndAnalysis, AnalyzerIdentity.INTERNAL_ANALYZER);
-        withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysis(project.getId(), componentWithVulnAndAnalysis.getId(), vulnB.getId(), AnalysisState.RESOLVED, null, AnalysisResponse.UPDATE, null, true));
+        qm.addVulnerability(vulnB, componentWithVulnAndAnalysis, "internal");
+        qm.makeAnalysis(
+                new MakeAnalysisCommand(componentWithVulnAndAnalysis, vulnB)
+                        .withState(AnalysisState.RESOLVED)
+                        .withResponse(AnalysisResponse.UPDATE)
+                        .withSuppress(true));
 
         // Make componentWithoutVuln (acme-lib-a) depend on componentWithVuln (acme-lib-b)
         componentWithoutVuln.setDirectDependencies("""
@@ -230,6 +238,7 @@ public class VexResourceTest extends ResourceTest {
 
     @Test
     public void exportProjectAsCycloneDxAclTest() {
+        initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS_READ);
         enablePortfolioAccessControl();
 
         final var project = new Project();
@@ -258,9 +267,55 @@ public class VexResourceTest extends ResourceTest {
         assertThat(response.getStatus()).isEqualTo(200);
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"1.4", "1.5", "1.6", ""})
+    void exportVexWithVersion(String version) {
+        initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS_READ);
+
+        Project project = new Project();
+        project.setName("acme-app");
+        project.setVersion("1.0.0");
+        project.setClassifier(Classifier.APPLICATION);
+        qm.persist(project);
+
+        Response response = jersey.target("%s/cyclonedx/project/%s".formatted(V1_VEX, project.getUuid()))
+                .queryParam("version", version)
+                .request()
+                .header(X_API_KEY, apiKey)
+                .get(Response.class);
+
+        assertThat(response.getStatus()).isEqualTo(200);
+        final String jsonResponse = getPlainTextBody(response);
+        assertThatNoException().isThrownBy(() -> CycloneDxValidator.getInstance().validate(jsonResponse.getBytes()));
+
+        String expectedCdxVersionSpec = version.isEmpty() ? "1.5" : version;
+        assertThatJson(jsonResponse, json -> json.inPath("specVersion").isEqualTo("\"" + expectedCdxVersionSpec + "\""));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"99", "-15", "1.9", " 0.9", "invalidString"})
+    void exportVexWithInvalidVersionsStrings(String version) {
+        initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS_READ);
+
+        Project project = new Project();
+        project.setName("acme-app");
+        project.setVersion("1.0.0");
+        project.setClassifier(Classifier.APPLICATION);
+        qm.persist(project);
+
+        Response response = jersey.target("%s/cyclonedx/project/%s".formatted(V1_VEX, project.getUuid()))
+                .queryParam("version", version)
+                .request()
+                .header(X_API_KEY, apiKey)
+                .get(Response.class);
+
+        assertThat(response.getStatus()).isEqualTo(400);
+        assertThat(getPlainTextBody(response)).isEqualTo("Invalid CycloneDX version specified.");
+    }
+
     @Test
     public void uploadVexInvalidJsonTest() {
-        initializeWithPermissions(Permissions.BOM_UPLOAD);
+        initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS_UPDATE);
 
         final var project = new Project();
         project.setName("acme-app");
@@ -308,7 +363,7 @@ public class VexResourceTest extends ResourceTest {
 
     @Test
     public void uploadVexInvalidXmlTest() {
-        initializeWithPermissions(Permissions.BOM_UPLOAD);
+        initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS_UPDATE);
 
         final var project = new Project();
         project.setName("acme-app");
@@ -353,6 +408,8 @@ public class VexResourceTest extends ResourceTest {
 
     @Test
     public void uploadVexTooLargeViaPutTest() {
+        initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS_UPDATE);
+
         final var project = new Project();
         project.setName("acme-app");
         project.setVersion("1.0.0");
@@ -382,6 +439,7 @@ public class VexResourceTest extends ResourceTest {
 
     @Test
     public void uploadVexAclTest() {
+        initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS_UPDATE);
         enablePortfolioAccessControl();
 
         final var project = new Project();
@@ -421,10 +479,20 @@ public class VexResourceTest extends ResourceTest {
 
         response = responseSupplier.get();
         assertThat(response.getStatus()).isEqualTo(200);
+        assertThatJson(getPlainTextBody(response))
+                .withMatcher("projectUuid", equalTo(project.getUuid().toString()))
+                .isEqualTo(/* language=JSON */ """
+                        {
+                          "token": "${json-unit.any-string}",
+                          "projectUuid": "${json-unit.matches:projectUuid}"
+                        }
+                        """);
     }
 
     @Test
     public void exportVexWithSameVulnAnalysisValidJsonTest() {
+        initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS_READ);
+
         var project = new Project();
         project.setName("acme-app");
         project.setVersion("1.0.0");
@@ -448,13 +516,19 @@ public class VexResourceTest extends ResourceTest {
         vuln.setSource(Vulnerability.Source.INTERNAL);
         vuln.setSeverity(Severity.HIGH);
         qm.createVulnerability(vuln, false);
-        qm.addVulnerability(vuln, componentAWithVuln, AnalyzerIdentity.NONE);
-        withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysis(project.getId(), componentAWithVuln.getId(), vuln.getId(), AnalysisState.RESOLVED, null, AnalysisResponse.UPDATE, null, true));
+        qm.addVulnerability(vuln, componentAWithVuln, "none");
+        qm.makeAnalysis(
+                new MakeAnalysisCommand(componentAWithVuln, vuln)
+                        .withState(AnalysisState.RESOLVED)
+                        .withResponse(AnalysisResponse.UPDATE)
+                        .withSuppress(true));
 
-        qm.addVulnerability(vuln, componentBWithVuln, AnalyzerIdentity.NONE);
-        withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysis(project.getId(), componentBWithVuln.getId(), vuln.getId(), AnalysisState.RESOLVED, null, AnalysisResponse.UPDATE, null, true));
+        qm.addVulnerability(vuln, componentBWithVuln, "none");
+        qm.makeAnalysis(
+                new MakeAnalysisCommand(componentBWithVuln, vuln)
+                        .withState(AnalysisState.RESOLVED)
+                        .withResponse(AnalysisResponse.UPDATE)
+                        .withSuppress(true));
 
         qm.persist(project);
 
@@ -526,6 +600,8 @@ public class VexResourceTest extends ResourceTest {
 
     @Test
     public void exportVexWithDifferentVulnAnalysisValidJsonTest() {
+        initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS_READ);
+
         var project = new Project();
         project.setName("acme-app");
         project.setVersion("1.0.0");
@@ -549,13 +625,19 @@ public class VexResourceTest extends ResourceTest {
         vuln.setSource(Vulnerability.Source.INTERNAL);
         vuln.setSeverity(Severity.HIGH);
         qm.createVulnerability(vuln, false);
-        qm.addVulnerability(vuln, componentAWithVuln, AnalyzerIdentity.NONE);
-        withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysis(project.getId(), componentAWithVuln.getId(), vuln.getId(), AnalysisState.IN_TRIAGE, null, AnalysisResponse.UPDATE, null, true));
+        qm.addVulnerability(vuln, componentAWithVuln, "none");
+        qm.makeAnalysis(
+                new MakeAnalysisCommand(componentAWithVuln, vuln)
+                        .withState(AnalysisState.IN_TRIAGE)
+                        .withResponse(AnalysisResponse.UPDATE)
+                        .withSuppress(true));
 
-        qm.addVulnerability(vuln, componentBWithVuln, AnalyzerIdentity.NONE);
-        withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysis(project.getId(), componentBWithVuln.getId(), vuln.getId(), AnalysisState.EXPLOITABLE, null, AnalysisResponse.UPDATE, null, true));
+        qm.addVulnerability(vuln, componentBWithVuln, "none");
+        qm.makeAnalysis(
+                new MakeAnalysisCommand(componentBWithVuln, vuln)
+                        .withState(AnalysisState.EXPLOITABLE)
+                        .withResponse(AnalysisResponse.UPDATE)
+                        .withSuppress(true));
 
         qm.persist(project);
 
@@ -654,7 +736,7 @@ public class VexResourceTest extends ResourceTest {
 
     @Test
     public void uploadVexWithValidationModeDisabledTest() {
-        initializeWithPermissions(Permissions.BOM_UPLOAD);
+        initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS_UPDATE);
 
         qm.createConfigProperty(
                 BOM_VALIDATION_MODE.getGroupName(),
@@ -699,7 +781,7 @@ public class VexResourceTest extends ResourceTest {
 
     @Test
     public void uploadVexWithValidationModeEnabledForTagsTest() {
-        initializeWithPermissions(Permissions.BOM_UPLOAD);
+        initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS_UPDATE);
 
         qm.createConfigProperty(
                 BOM_VALIDATION_MODE.getGroupName(),
@@ -766,7 +848,7 @@ public class VexResourceTest extends ResourceTest {
 
     @Test
     public void uploadVexWithValidationModeDisabledForTagsTest() {
-        initializeWithPermissions(Permissions.BOM_UPLOAD);
+        initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS_UPDATE);
 
         qm.createConfigProperty(
                 BOM_VALIDATION_MODE.getGroupName(),
@@ -829,5 +911,36 @@ public class VexResourceTest extends ResourceTest {
                         }
                         """.formatted(encodedBom), MediaType.APPLICATION_JSON));
         assertThat(response.getStatus()).isEqualTo(400);
+    }
+
+    @Test
+    void shouldRejectVexUploadForCollectionProject() {
+        initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS_UPDATE);
+
+        final var project = new Project();
+        project.setName("acme-app");
+        project.setVersion("1.0.0");
+        project.setCollectionLogic(ProjectCollectionLogic.AGGREGATE_DIRECT_CHILDREN);
+        qm.persist(project);
+
+        final String encodedVex = Base64.getEncoder().encodeToString("""
+                {
+                  "bomFormat": "CycloneDX",
+                  "specVersion": "1.5",
+                  "version": 1
+                }
+                """.getBytes());
+
+        final Response response = jersey.target(V1_VEX).request()
+                .header(X_API_KEY, apiKey)
+                .put(Entity.entity("""
+                        {
+                          "projectName": "acme-app",
+                          "projectVersion": "1.0.0",
+                          "vex": "%s"
+                        }
+                        """.formatted(encodedVex), MediaType.APPLICATION_JSON));
+        assertThat(response.getStatus()).isEqualTo(400);
+        assertThat(getPlainTextBody(response)).isEqualTo("VEX cannot be uploaded to a collection project.");
     }
 }

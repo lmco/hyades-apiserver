@@ -20,6 +20,8 @@ package org.dependencytrack.resources.v2;
 
 import alpine.server.auth.PermissionRequired;
 import com.github.packageurl.MalformedPackageURLException;
+import com.github.packageurl.PackageURL;
+import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.ClientErrorException;
 import jakarta.ws.rs.NotAuthorizedException;
 import jakarta.ws.rs.NotFoundException;
@@ -30,45 +32,42 @@ import jakarta.ws.rs.ext.Provider;
 import org.apache.commons.lang3.StringUtils;
 import org.dependencytrack.api.v2.ComponentsApi;
 import org.dependencytrack.api.v2.model.CreateComponentRequest;
+import org.dependencytrack.api.v2.model.ListComponentsResponse;
+import org.dependencytrack.api.v2.model.ListComponentsResponseItem;
+import org.dependencytrack.api.v2.model.SortDirection;
 import org.dependencytrack.auth.Permissions;
-import org.dependencytrack.event.ComponentVulnerabilityAnalysisEvent;
-import org.dependencytrack.event.kafka.KafkaEventDispatcher;
-import org.dependencytrack.event.kafka.componentmeta.ComponentProjection;
-import org.dependencytrack.event.kafka.componentmeta.Handler;
-import org.dependencytrack.event.kafka.componentmeta.HandlerFactory;
+import org.dependencytrack.common.pagination.Page;
 import org.dependencytrack.exception.ProjectAccessDeniedException;
 import org.dependencytrack.model.Classifier;
 import org.dependencytrack.model.Component;
-import org.dependencytrack.model.IntegrityMetaComponent;
 import org.dependencytrack.model.License;
 import org.dependencytrack.model.Project;
-import org.dependencytrack.model.VulnerabilityAnalysisLevel;
-import org.dependencytrack.model.VulnerabilityScan;
 import org.dependencytrack.persistence.QueryManager;
-import org.dependencytrack.persistence.jdbi.VulnerabilityScanDao;
-import org.dependencytrack.proto.repometaanalysis.v1.FetchMeta;
+import org.dependencytrack.persistence.jdbi.ComponentDao;
 import org.dependencytrack.resources.AbstractApiResource;
 import org.dependencytrack.util.InternalComponentIdentifier;
 import org.dependencytrack.util.PurlUtil;
 import org.owasp.security.logging.SecurityMarkers;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import us.springett.parsers.cpe.CpeParser;
+import us.springett.parsers.cpe.exceptions.CpeParsingException;
 
-import java.time.Instant;
 import java.util.UUID;
 
-import static org.dependencytrack.event.kafka.componentmeta.IntegrityCheck.calculateIntegrityResult;
-import static org.dependencytrack.model.FetchStatus.NOT_AVAILABLE;
-import static org.dependencytrack.model.FetchStatus.PROCESSED;
-import static org.dependencytrack.persistence.jdbi.JdbiFactory.withJdbiHandle;
+import static org.dependencytrack.persistence.jdbi.JdbiFactory.inJdbiTransaction;
+import static org.dependencytrack.resources.v2.mapping.ModelMapper.mapDependencyMetrics;
+import static org.dependencytrack.resources.v2.mapping.ModelMapper.mapHashes;
+import static org.dependencytrack.resources.v2.mapping.ModelMapper.mapLicense;
 import static org.dependencytrack.resources.v2.mapping.ModelMapper.mapOrganizationalContacts;
+import static org.dependencytrack.resources.v2.mapping.ModelMapper.mapProject;
+import static org.dependencytrack.resources.v2.mapping.ModelMapper.mapSortDirection;
 import static org.dependencytrack.util.PersistenceUtil.isUniqueConstraintViolation;
 
 @Provider
 public class ComponentsResource extends AbstractApiResource implements ComponentsApi {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(ComponentsResource.class);
-    private final KafkaEventDispatcher kafkaEventDispatcher = new KafkaEventDispatcher();
 
     @Context
     private UriInfo uriInfo;
@@ -79,7 +78,7 @@ public class ComponentsResource extends AbstractApiResource implements Component
     public Response createComponent(final CreateComponentRequest request) {
         final UUID projectUuid = request.getProjectUuid();
         try (QueryManager qm = new QueryManager()) {
-            final Component componentCreated = qm.callInTransaction(() -> {
+            final Component component = qm.callInTransaction(() -> {
                 final Project project = qm.getObjectByUuid(Project.class, projectUuid);
                 if (project == null) {
                     throw new NotFoundException();
@@ -92,15 +91,11 @@ public class ComponentsResource extends AbstractApiResource implements Component
                 return mapRequestToComponent(request, qm, project);
             });
 
-            final var vulnAnalysisEvent = new ComponentVulnerabilityAnalysisEvent(UUID.randomUUID(), componentCreated, VulnerabilityAnalysisLevel.MANUAL_ANALYSIS, true);
-            withJdbiHandle(handle -> handle.attach(VulnerabilityScanDao.class).createVulnerabilityScan(
-                    VulnerabilityScan.TargetType.COMPONENT.name(), componentCreated.getUuid(), vulnAnalysisEvent.token(), 1, Instant.now()));
-            kafkaEventDispatcher.dispatchEvent(vulnAnalysisEvent);
-
             LOGGER.info(SecurityMarkers.SECURITY_AUDIT, "Component created: {}", request.getName());
             return Response
                     .created(uriInfo.getBaseUriBuilder()
                             .path("/components")
+                            .path(component.getUuid().toString())
                             .build())
                     .build();
         } catch (RuntimeException e) {
@@ -109,6 +104,70 @@ public class ComponentsResource extends AbstractApiResource implements Component
             }
             throw e;
         }
+    }
+
+    @Override
+    @PermissionRequired(Permissions.Constants.VIEW_PORTFOLIO)
+    public Response listComponents(String groupContains, String nameContains, String versionContains, String purlPrefix, String cpe,
+                                   String swidTagIdContains, String hashType, String hash, Integer limit, String pageToken, SortDirection sortDirection, String sortBy) {
+        return inJdbiTransaction(getAlpineRequest(), handle -> {
+            PackageURL packageURL = null;
+            if (purlPrefix != null) {
+                try {
+                    packageURL = new PackageURL(StringUtils.trimToNull(purlPrefix));
+                } catch (MalformedPackageURLException e) {
+                    throw new BadRequestException("Invalid package URL: %s".formatted(purlPrefix));
+                }
+            }
+            if (cpe != null) {
+                try {
+                    CpeParser.parse(StringUtils.trimToNull(cpe));
+                } catch (CpeParsingException e) {
+                    throw new BadRequestException("Invalid CPE: %s".formatted(cpe));
+                }
+            }
+            ComponentDao.HashType hashTypeEnum = null;
+            if (hashType != null) {
+                try {
+                    hashTypeEnum = ComponentDao.HashType.valueOf(StringUtils.trimToNull(hashType).toUpperCase());
+                } catch (IllegalArgumentException e) {
+                    throw new BadRequestException("Invalid Hash type: %s".formatted(hashType));
+                }
+            }
+            final Page<Component> componentsPage = handle.attach(ComponentDao.class)
+                    .listComponents(null, true, packageURL != null ? packageURL.canonicalize().toLowerCase() : null, StringUtils.trimToNull(cpe),
+                            StringUtils.trimToNull(swidTagIdContains), StringUtils.trimToNull(groupContains), StringUtils.trimToNull(nameContains),
+                            StringUtils.trimToNull(versionContains), hashTypeEnum, StringUtils.trimToNull(hash), limit, pageToken, sortBy, mapSortDirection(sortDirection));
+
+            final var response = ListComponentsResponse.builder()
+                    .items(componentsPage.items().stream()
+                            .<ListComponentsResponseItem>map(
+                                    componentRow -> ListComponentsResponseItem.builder()
+                                            .name(componentRow.getName())
+                                            .hashes(mapHashes(componentRow))
+                                            .classifier(componentRow.getClassifier() != null ? componentRow.getClassifier().name() : null)
+                                            .copyright(componentRow.getCopyright())
+                                            .cpe(componentRow.getCpe())
+                                            .group(componentRow.getGroup())
+                                            .internal(componentRow.isInternal())
+                                            .lastInheritedRiskScore(componentRow.getLastInheritedRiskScore())
+                                            .license(componentRow.getLicense())
+                                            .licenseExpression(componentRow.getLicenseExpression())
+                                            .licenseUrl(componentRow.getLicenseUrl())
+                                            .resolvedLicense(mapLicense(componentRow.getResolvedLicense()))
+                                            .purl(componentRow.getPurl() != null ? componentRow.getPurl().toString() : null)
+                                            .swidTagId(componentRow.getSwidTagId())
+                                            .uuid(componentRow.getUuid())
+                                            .version(componentRow.getVersion())
+                                            .project(mapProject(componentRow.getProject()))
+                                            .metrics(mapDependencyMetrics(componentRow.getMetrics()))
+                                            .build())
+                            .toList())
+                    .nextPageToken(componentsPage.nextPageToken())
+                    .total(convertTotalCount(componentsPage.totalCount()))
+                    .build();
+            return Response.ok(response).build();
+        });
     }
 
     private Component mapRequestToComponent(CreateComponentRequest request, QueryManager qm, Project project) {
@@ -163,20 +222,6 @@ public class ComponentsResource extends AbstractApiResource implements Component
 
         qm.createComponent(component, true);
 
-        if (component.getPurl() != null) {
-            ComponentProjection componentProjection =
-                    new ComponentProjection(component.getUuid(), component.getPurlCoordinates().toString(),
-                            component.isInternal(), component.getPurl());
-            try {
-                Handler repoMetaHandler = HandlerFactory.createHandler(componentProjection, qm, kafkaEventDispatcher, FetchMeta.FETCH_META_INTEGRITY_DATA_AND_LATEST_VERSION);
-                IntegrityMetaComponent integrityMetaComponent = repoMetaHandler.handle();
-                if (integrityMetaComponent != null && (integrityMetaComponent.getStatus() == PROCESSED || integrityMetaComponent.getStatus() == NOT_AVAILABLE)) {
-                    calculateIntegrityResult(integrityMetaComponent, component, qm);
-                }
-            } catch (MalformedPackageURLException ex) {
-                LOGGER.warn("Unable to process package url %s".formatted(componentProjection.purl()));
-            }
-        }
         return component;
     }
 }

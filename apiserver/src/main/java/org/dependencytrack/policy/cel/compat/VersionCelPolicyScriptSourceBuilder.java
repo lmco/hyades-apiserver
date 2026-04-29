@@ -18,15 +18,17 @@
  */
 package org.dependencytrack.policy.cel.compat;
 
-import alpine.common.logging.Logger;
 import io.github.nscuro.versatile.Comparator;
 import io.github.nscuro.versatile.Vers;
 import io.github.nscuro.versatile.VersException;
-import io.github.nscuro.versatile.version.VersioningScheme;
 import org.dependencytrack.model.PolicyCondition;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import static io.github.nscuro.versatile.version.KnownVersioningSchemes.SCHEME_GENERIC;
 
 public class VersionCelPolicyScriptSourceBuilder implements CelPolicyScriptSourceBuilder {
-    private static final Logger LOGGER = Logger.getLogger(VersionCelPolicyScriptSourceBuilder.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(VersionCelPolicyScriptSourceBuilder.class);
 
     @Override
     public String apply(PolicyCondition policyCondition) {
@@ -44,31 +46,31 @@ public class VersionCelPolicyScriptSourceBuilder implements CelPolicyScriptSourc
         try {
             switch (policyCondition.getOperator()) {
                 case NUMERIC_EQUAL:
-                    return Vers.builder(VersioningScheme.GENERIC)
+                    return Vers.builder(SCHEME_GENERIC)
                             .withConstraint(Comparator.EQUAL, policyCondition.getValue())
                             .build();
                 case NUMERIC_NOT_EQUAL:
-                    return Vers.builder(VersioningScheme.GENERIC)
+                    return Vers.builder(SCHEME_GENERIC)
                             .withConstraint(Comparator.NOT_EQUAL, policyCondition.getValue())
                             .build();
                 case NUMERIC_LESS_THAN:
-                    return Vers.builder(VersioningScheme.GENERIC)
+                    return Vers.builder(SCHEME_GENERIC)
                             .withConstraint(Comparator.LESS_THAN, policyCondition.getValue())
                             .build();
                 case NUMERIC_LESSER_THAN_OR_EQUAL:
-                    return Vers.builder(VersioningScheme.GENERIC)
+                    return Vers.builder(SCHEME_GENERIC)
                             .withConstraint(Comparator.LESS_THAN_OR_EQUAL, policyCondition.getValue())
                             .build();
                 case NUMERIC_GREATER_THAN:
-                    return Vers.builder(VersioningScheme.GENERIC)
+                    return Vers.builder(SCHEME_GENERIC)
                             .withConstraint(Comparator.GREATER_THAN, policyCondition.getValue())
                             .build();
                 case NUMERIC_GREATER_THAN_OR_EQUAL:
-                    return Vers.builder(VersioningScheme.GENERIC)
+                    return Vers.builder(SCHEME_GENERIC)
                             .withConstraint(Comparator.GREATER_THAN_OR_EQUAL, policyCondition.getValue())
                             .build();
                 default:
-                    LOGGER.warn("Unsupported operation " + policyCondition.getOperator());
+                    LOGGER.warn("Unsupported operation {}", policyCondition.getOperator());
                     return null;
             }
         } catch (VersException versException) {

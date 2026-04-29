@@ -18,16 +18,21 @@
  */
 package org.dependencytrack.policy.cel.compat;
 
-import alpine.common.logging.Logger;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
 import org.cyclonedx.model.Hash;
+import org.dependencytrack.common.Mappers;
 import org.dependencytrack.model.PolicyCondition;
-import org.json.JSONObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.io.UncheckedIOException;
 
 import static org.dependencytrack.policy.cel.compat.CelPolicyScriptSourceBuilder.escapeQuotes;
 
 public class ComponentHashCelPolicyScriptSourceBuilder implements CelPolicyScriptSourceBuilder {
 
-    private static final Logger LOGGER = Logger.getLogger(ComponentHashCelPolicyScriptSourceBuilder.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(ComponentHashCelPolicyScriptSourceBuilder.class);
 
     @Override
     public String apply(final PolicyCondition policyCondition) {
@@ -41,22 +46,31 @@ public class ComponentHashCelPolicyScriptSourceBuilder implements CelPolicyScrip
             LOGGER.warn("Component does not have a field named %s".formatted(fieldName));
             return null;
         }
-        if (policyCondition.getOperator().equals(PolicyCondition.Operator.IS)) {
-            return """
+        return switch (policyCondition.getOperator()) {
+            case IS -> """
                     component.%s == "%s"
                     """.formatted(fieldName, escapeQuotes(hash.getValue()));
-        } else {
-            LOGGER.warn("Policy operator %s is not allowed with this policy".formatted(policyCondition.getOperator().toString()));
-            return null;
-        }
+            case IS_NOT -> """
+                    component.%s != "%s"
+                    """.formatted(fieldName, escapeQuotes(hash.getValue()));
+            default -> {
+                LOGGER.warn("Policy operator %s is not supported for this subject".formatted(policyCondition.getOperator()));
+                yield null;
+            }
+        };
     }
 
     private static Hash extractHashValues(PolicyCondition condition) {
-        //Policy condition received here will never be null
-        final JSONObject def = new JSONObject(condition.getValue());
+        final JsonNode valueNode;
+        try {
+            valueNode = Mappers.jsonMapper().readTree(condition.getValue());
+        } catch (JsonProcessingException e) {
+            throw new UncheckedIOException(e);
+        }
+
         return new Hash(
-                def.optString("algorithm", null),
-                def.optString("value", null)
+                valueNode.path("algorithm").asText(null),
+                valueNode.path("value").asText(null)
         );
     }
 

@@ -70,6 +70,7 @@ public class Finding implements Serializable {
         optValue(vulnerability, "subtitle", findingRow.vulnSubtitle());
         optValue(vulnerability, "description", findingRow.vulnDescription());
         optValue(vulnerability, "recommendation", findingRow.vulnRecommendation());
+        optValue(vulnerability, "references", findingRow.vulnReferences());
         if (findingRow.vulnSeverity() != null) {
             final Severity severity = findingRow.vulnSeverity();
             optValue(vulnerability, "severity", severity.name());
@@ -77,8 +78,10 @@ public class Finding implements Serializable {
         }
         optValue(vulnerability, "cvssV2BaseScore", findingRow.cvssV2BaseScore());
         optValue(vulnerability, "cvssV3BaseScore", findingRow.cvssV3BaseScore());
+        optValue(vulnerability, "cvssV4Score", findingRow.cvssV4Score());
         optValue(vulnerability, "cvssV2Vector", findingRow.cvssV2Vector());
         optValue(vulnerability, "cvssV3Vector", findingRow.cvssV3Vector());
+        optValue(vulnerability, "cvssV4Vector", findingRow.cvssV4Vector());
         optValue(vulnerability, "owaspLikelihoodScore", findingRow.owaspRRLikelihoodScore());
         optValue(vulnerability, "owaspTechnicalImpactScore", findingRow.owaspRRTechnicalImpactScore());
         optValue(vulnerability, "owaspBusinessImpactScore", findingRow.owaspRRBusinessImpactScore());

@@ -18,8 +18,6 @@
  */
 package org.dependencytrack.plugin.api;
 
-import org.dependencytrack.plugin.api.config.ConfigRegistry;
-
 import java.io.Closeable;
 
 /**
@@ -49,12 +47,19 @@ public interface ExtensionFactory<T extends ExtensionPoint> extends Closeable {
     /**
      * Initialize the factory. This method is called <em>once</em> during application startup.
      *
-     * @param configRegistry A {@link ConfigRegistry} to read configuration from.
+     * @param serviceRegistry The {@link ServiceRegistry} providing platform services to the extension.
      */
-    void init(final ConfigRegistry configRegistry);
+    void init(ServiceRegistry serviceRegistry);
 
     /**
+     * Creates a new extension instance.
+     * <p>
+     * Implementations must never return {@code null}. If an extension instance
+     * cannot be created for any reason, this method must signal the failure by
+     * throwing an unchecked exception, such as {@link IllegalStateException}.
+     *
      * @return An extension instance.
+     * @throws IllegalStateException If an extension instance cannot be created.
      */
     T create();
 

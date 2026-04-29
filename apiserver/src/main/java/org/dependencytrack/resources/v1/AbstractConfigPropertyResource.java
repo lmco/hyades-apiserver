@@ -18,23 +18,25 @@
  */
 package org.dependencytrack.resources.v1;
 
-import alpine.common.logging.Logger;
 import alpine.common.util.BooleanUtil;
 import alpine.common.util.UuidUtil;
 import alpine.model.IConfigProperty;
-import alpine.security.crypto.DataEncryption;
-import org.dependencytrack.model.BomValidationMode;
-import org.dependencytrack.model.ConfigPropertyAccessMode;
-import org.dependencytrack.model.ConfigPropertyConstants;
-import org.dependencytrack.persistence.QueryManager;
-import org.dependencytrack.resources.AbstractApiResource;
-import org.owasp.security.logging.SecurityMarkers;
-
 import jakarta.json.Json;
 import jakarta.json.JsonArray;
 import jakarta.json.JsonReader;
 import jakarta.json.JsonString;
 import jakarta.ws.rs.core.Response;
+import org.apache.commons.lang3.StringUtils;
+import org.dependencytrack.model.BomValidationMode;
+import org.dependencytrack.model.ConfigPropertyAccessMode;
+import org.dependencytrack.model.ConfigPropertyConstants;
+import org.dependencytrack.persistence.QueryManager;
+import org.dependencytrack.resources.AbstractApiResource;
+import org.dependencytrack.secret.management.SecretManager;
+import org.owasp.security.logging.SecurityMarkers;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.StringReader;
 import java.math.BigDecimal;
 import java.net.MalformedURLException;
@@ -44,8 +46,12 @@ import java.util.stream.Collectors;
 
 abstract class AbstractConfigPropertyResource extends AbstractApiResource {
 
-    private final Logger LOGGER = Logger.getLogger(this.getClass()); // Use the classes that extend this, not this class itself
-    static final String ENCRYPTED_PLACEHOLDER = "HiddenDecryptedPropertyPlaceholder";
+    private final Logger LOGGER = LoggerFactory.getLogger(this.getClass()); // Use the classes that extend this, not this class itself
+    private final SecretManager secretManager;
+
+    AbstractConfigPropertyResource(SecretManager secretManager) {
+        this.secretManager = secretManager;
+    }
 
     Response updatePropertyValue(QueryManager qm, IConfigProperty json, IConfigProperty property) {
         if (property != null) {
@@ -55,9 +61,6 @@ abstract class AbstractConfigPropertyResource extends AbstractApiResource {
             }
             property = qm.persist(property);
             IConfigProperty detached = qm.detach(property.getClass(), property.getId());
-            if (IConfigProperty.PropertyType.ENCRYPTEDSTRING == detached.getPropertyType()) {
-                detached.setPropertyValue(ENCRYPTED_PLACEHOLDER);
-            }
             return Response.ok(detached).build();
         } else {
             return Response.status(Response.Status.NOT_FOUND).entity("The config property could not be found.").build();
@@ -65,12 +68,25 @@ abstract class AbstractConfigPropertyResource extends AbstractApiResource {
     }
 
     private Response updatePropertyValueInternal(IConfigProperty json, IConfigProperty property) {
-        final ConfigPropertyConstants wellKnownProperty = ConfigPropertyConstants.ofProperty(property);
+        final var wellKnownProperty = ConfigPropertyConstants.ofProperty(property);
         if (wellKnownProperty != null && wellKnownProperty.getAccessMode() == ConfigPropertyAccessMode.READ_ONLY) {
             return Response
                     .status(Response.Status.BAD_REQUEST)
                     .entity("The property %s.%s can not be modified".formatted(property.getGroupName(), property.getPropertyName()))
                     .build();
+        }
+
+        if (wellKnownProperty != null && wellKnownProperty.isSecretName()) {
+            final String secretName = StringUtils.trimToNull(json.getPropertyValue());
+            if (secretName != null && secretManager.getSecretMetadata(secretName) == null) {
+                return Response
+                        .status(Response.Status.BAD_REQUEST)
+                        .entity("The secret with name \"%s\" could not be found.".formatted(secretName))
+                        .build();
+            }
+
+            property.setPropertyValue(secretName);
+            return null;
         }
 
         if (property.getPropertyType() == IConfigProperty.PropertyType.BOOLEAN) {
@@ -82,13 +98,6 @@ abstract class AbstractConfigPropertyResource extends AbstractApiResource {
         } else if (property.getPropertyType() == IConfigProperty.PropertyType.INTEGER) {
             try {
                 int propertyValue = Integer.parseInt(json.getPropertyValue());
-                if (ConfigPropertyConstants.TASK_SCHEDULER_LDAP_SYNC_CADENCE.getGroupName().equals(json.getGroupName()) && propertyValue <= 0) {
-                    return Response.status(Response.Status.BAD_REQUEST).entity("A Task scheduler cadence (" + json.getPropertyName() + ") cannot be inferior to one hour.A value of " + propertyValue + " was provided.").build();
-                }
-                if (ConfigPropertyConstants.SEARCH_INDEXES_CONSISTENCY_CHECK_DELTA_THRESHOLD.getPropertyName().equals(json.getPropertyName()) && (propertyValue < 1 || propertyValue > 100)) {
-                    return Response.status(Response.Status.BAD_REQUEST).entity("Lucene index delta threshold (" + json.getPropertyName() + ") cannot be inferior to 1 or superior to 100.A value of " + propertyValue + " was provided.").build();
-                }
-
                 if (ConfigPropertyConstants.CUSTOM_RISK_SCORE_CRITICAL.getPropertyName().equals(json.getPropertyName()) ||
                         ConfigPropertyConstants.CUSTOM_RISK_SCORE_HIGH.getPropertyName().equals(json.getPropertyName()) ||
                         ConfigPropertyConstants.CUSTOM_RISK_SCORE_MEDIUM.getPropertyName().equals(json.getPropertyName()) ||
@@ -127,21 +136,6 @@ abstract class AbstractConfigPropertyResource extends AbstractApiResource {
                 property.setPropertyValue(json.getPropertyValue());
             } else {
                 return Response.status(Response.Status.BAD_REQUEST).entity("The property expected a UUID but a valid UUID was not sent.").build();
-            }
-        } else if (property.getPropertyType() == IConfigProperty.PropertyType.ENCRYPTEDSTRING) {
-            if (json.getPropertyValue() == null) {
-                property.setPropertyValue(null);
-            } else {
-                try {
-                    // Determine if the value of the encrypted property value is that of the placeholder. If so, the value has not been modified and should not be saved.
-                    if (ENCRYPTED_PLACEHOLDER.equals(json.getPropertyValue())) {
-                        return Response.notModified().build();
-                    }
-                    property.setPropertyValue(DataEncryption.encryptAsString(json.getPropertyValue()));
-                } catch (Exception e) {
-                    LOGGER.error("An error occurred while encrypting config property value", e);
-                    return Response.status(Response.Status.INTERNAL_SERVER_ERROR).entity("An error occurred while encrypting property value. Check log for details.").build();
-                }
             }
         } else if (ConfigPropertyConstants.BOM_VALIDATION_MODE.getPropertyName().equals(json.getPropertyName())) {
             try {

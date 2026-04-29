@@ -18,8 +18,6 @@
  */
 package org.dependencytrack.policy.cel.compat;
 
-import junitparams.JUnitParamsRunner;
-import junitparams.Parameters;
 import org.dependencytrack.PersistenceCapableTest;
 import org.dependencytrack.model.Component;
 import org.dependencytrack.model.Policy;
@@ -29,41 +27,43 @@ import org.dependencytrack.model.PolicyCondition.Subject;
 import org.dependencytrack.model.PolicyViolation.Type;
 import org.dependencytrack.model.Project;
 import org.dependencytrack.policy.cel.CelPolicyEngine;
-import org.junit.Test;
-import org.junit.runner.RunWith;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@RunWith(JUnitParamsRunner.class)
 public class HashConditionTest extends PersistenceCapableTest {
 
-    private Object[] parameters() {
+    private static Object[] parameters() {
         return new Object[]{
-                new Object[]{Policy.Operator.ANY, Operator.IS, "{ 'algorithm': 'SHA256', 'value': 'test_hash' }",
+                new Object[]{Policy.Operator.ANY, Operator.IS, "{ \"algorithm\": \"SHA256\", \"value\": \"test_hash\" }",
                         "test_hash", true, ViolationState.FAIL, Type.OPERATIONAL, ViolationState.FAIL},
-                new Object[]{Policy.Operator.ANY, Operator.IS, "{ 'algorithm': 'SHA256', 'value': 'test_hash' }",
+                new Object[]{Policy.Operator.ANY, Operator.IS, "{ \"algorithm\": \"SHA256\", \"value\": \"test_hash\" }",
                         "test_hash", true, ViolationState.WARN, Type.OPERATIONAL, ViolationState.WARN},
-                new Object[]{Policy.Operator.ANY, Operator.IS, "{ 'algorithm': 'SHA256', 'value': 'test_hash' }",
+                new Object[]{Policy.Operator.ANY, Operator.IS, "{ \"algorithm\": \"SHA256\", \"value\": \"test_hash\" }",
                         "test_hash_false", false, ViolationState.INFO, Type.OPERATIONAL, ViolationState.INFO},
-                new Object[]{Policy.Operator.ANY, Operator.IS, "{ 'algorithm': 'test', 'value': 'test_hash' }",
+                new Object[]{Policy.Operator.ANY, Operator.IS, "{ \"algorithm\": \"test\", \"value\": \"test_hash\" }",
                         "test_hash", false, ViolationState.INFO, null, null},
-                new Object[]{Policy.Operator.ANY, Operator.IS_NOT, "{ 'algorithm': 'SHA256', 'value': 'test_hash' }",
-                        "test_hash20", false, ViolationState.INFO, null, null},
-                new Object[]{Policy.Operator.ANY, Operator.MATCHES, "{ 'algorithm': 'SHA256', 'value': 'test_hash' }",
+                new Object[]{Policy.Operator.ANY, Operator.IS_NOT, "{ \"algorithm\": \"SHA256\", \"value\": \"test_hash\" }",
+                        "test_hash20", true, ViolationState.FAIL, Type.OPERATIONAL, ViolationState.FAIL},
+                new Object[]{Policy.Operator.ANY, Operator.IS_NOT, "{ \"algorithm\": \"SHA256\", \"value\": \"test_hash\" }",
                         "test_hash", false, ViolationState.INFO, null, null},
-                new Object[]{Policy.Operator.ANY, Operator.IS, "{ 'algorithm': null, 'value': 'test_hash' }",
+                new Object[]{Policy.Operator.ANY, Operator.MATCHES, "{ \"algorithm\": \"SHA256\", \"value\": \"test_hash\" }",
+                        "test_hash", false, ViolationState.INFO, null, null},
+                new Object[]{Policy.Operator.ANY, Operator.IS, "{ \"algorithm\": null, \"value\": \"test_hash\" }",
                         "test_hash", false, ViolationState.FAIL, null, null},
-                new Object[]{Policy.Operator.ANY, Operator.IS, "{ 'algorithm': 'MD5', 'value': null }",
+                new Object[]{Policy.Operator.ANY, Operator.IS, "{ \"algorithm\": \"MD5\", \"value\": null }",
                         "test_hash", false, ViolationState.FAIL, null, null},
-                new Object[]{Policy.Operator.ANY, Operator.IS, "{ 'algorithm': 'SHA256', 'value': '' }",
+                new Object[]{Policy.Operator.ANY, Operator.IS, "{ \"algorithm\": \"SHA256\", \"value\": \"\" }",
                         "test_hash", false, ViolationState.FAIL, null, null},
-                new Object[]{Policy.Operator.ANY, Operator.IS, "{ 'algorithm': '', 'value': 'test_hash' }",
+                new Object[]{Policy.Operator.ANY, Operator.IS, "{ \"algorithm\": \"\", \"value\": \"test_hash\" }",
                         "test_hash", false, ViolationState.FAIL, null, null},
         };
     }
 
-    @Test
-    @Parameters(method = "parameters")
+    @ParameterizedTest
+    @MethodSource("parameters")
     public void testCondition(Policy.Operator policyOperator, final Operator condition, final String conditionHash,
                               final String actualHash, final boolean expectViolation, ViolationState violationState,
                               Type actualType, ViolationState actualViolationState) {

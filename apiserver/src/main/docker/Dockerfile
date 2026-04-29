@@ -24,16 +24,17 @@ ARG DATA_DIR=/data/
 ARG UID=1000
 ARG GID=1000
 
-FROM eclipse-temurin:21.0.8_9-jdk-alpine@sha256:df8ce8302ed2ed1690ef490c633981b07e752b373b5fdf796960fb2eb0d640ea AS jre-build
+FROM eclipse-temurin:25.0.2_10-jdk-alpine@sha256:d3f9f60ad2040582239e2977ee753d598787d8b064ca39a8e131860165dd81fb AS jre-build
 
 WORKDIR /work
 
 COPY --chmod=755 ./src/main/docker/create-jre.sh ./
+COPY ./target/lib/ ./lib/
 COPY ./target/dependency-track-apiserver.jar ./
 
 RUN ./create-jre.sh -i ./dependency-track-apiserver.jar -o ./jre
 
-FROM alpine:3.22@sha256:8a1f59ffb675680d47db6337b49d22281a139e9d709335b492be023728e11715
+FROM alpine:3.23@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11
 
 ARG COMMIT_SHA
 ARG APP_VERSION
@@ -43,10 +44,8 @@ ARG UID
 ARG GID
 
 ENV TZ=Etc/UTC \
-    # Dependency-Track's default logging level
-    LOGGING_LEVEL=INFO \
     # JVM Options that are passed at runtime by default
-    JAVA_OPTIONS="-XX:+UseG1GC -XX:+UseStringDeduplication -XX:MaxGCPauseMillis=250 -XX:MaxRAMPercentage=80.0" \
+    JAVA_OPTIONS="-XX:+UseG1GC -XX:+UseStringDeduplication -XX:+UseCompactObjectHeaders -XX:MaxGCPauseMillis=250 -XX:MaxRAMPercentage=80.0" \
     # JVM Options that can be passed at runtime, while maintaining also those set in JAVA_OPTIONS.
     # e.g. EXTRA_JAVA_OPTIONS="-Dlogback.configurationFile=logback-json.xml"
     EXTRA_JAVA_OPTIONS="" \
@@ -62,33 +61,46 @@ ENV TZ=Etc/UTC \
     DEFAULT_TEMPLATES_OVERRIDE_ENABLED=false \
     DEFAULT_TEMPLATES_OVERRIDE_BASE_DIRECTORY=${DATA_DIR}
 
-# Create the directories where the WAR will be deployed to (${APP_DIR}) and Dependency-Track will store its data (${DATA_DIR})
+# Create the directories where the JAR will be deployed to (${APP_DIR}) and Dependency-Track will store its data (${DATA_DIR})
 # Create a user and assign home directory to a ${DATA_DIR}
 # Ensure UID 1000 & GID 1000 own all the needed directories
 RUN mkdir -p ${APP_DIR} ${DATA_DIR} \
-    && addgroup -S -g ${GID} dtrack || true \
-    && adduser -S -D -G dtrack -H -h ${DATA_DIR} -g "dtrack user" -s /bin/false -u ${UID} dtrack || true \
+    && addgroup -S -g ${GID} dtrack \
+    && adduser -S -D -G dtrack -H -h ${DATA_DIR} -g "dtrack user" -s /bin/false -u ${UID} dtrack \
     && chown -R dtrack:0 ${DATA_DIR} ${APP_DIR} \
     && chmod -R g=u ${DATA_DIR} ${APP_DIR} \
-    && apk add --no-cache gcompat tzdata
+    && apk add --no-cache gcompat tzdata curl
 
-COPY --from=jre-build /work/jre ${JAVA_HOME}
-COPY ./target/dependency-track-apiserver.jar ./src/main/docker/logback-json.xml ${APP_DIR}/
-
-# Specify the user to run as (in numeric format for compatibility with Kubernetes/OpenShift's SCC)
+WORKDIR ${APP_DIR}
 USER ${UID}
 
-# Specify the container working directory
-WORKDIR ${APP_DIR}
+COPY --from=jre-build --chown=${UID}:0 /work/jre ${JAVA_HOME}
+COPY --chown=${UID}:0 ./target/lib/ ./lib/
+COPY --chown=${UID}:0 ./target/dependency-track-apiserver.jar ./src/main/docker/logback-json.xml ./
 
 # Launch Dependency-Track
-CMD exec java ${JAVA_OPTIONS} ${EXTRA_JAVA_OPTIONS} --add-opens java.base/java.util.concurrent=ALL-UNNAMED -DdependencyTrack.logging.level=${LOGGING_LEVEL} -jar dependency-track-apiserver.jar -context ${CONTEXT}
+CMD [ \
+    "/bin/sh", "-c", \
+    "exec java \
+        ${JAVA_OPTIONS} \
+        ${EXTRA_JAVA_OPTIONS} \
+        --add-opens java.base/java.util.concurrent=ALL-UNNAMED \
+        --enable-native-access=ALL-UNNAMED \
+        --sun-misc-unsafe-memory-access=allow \
+        -cp 'dependency-track-apiserver.jar:lib/*' \
+        org.dependencytrack.Application \
+        -context ${CONTEXT}" \
+]
 
-# Specify which port Dependency-Track listens on
+# Specify which ports Dependency-Track listens on
 EXPOSE 8080
+EXPOSE 9000
 
-# Add a healthcheck using the Dependency-Track version API
-HEALTHCHECK --interval=30s --start-period=60s --timeout=3s CMD wget -t 1 -T 3 --proxy off -q -O /dev/null http://127.0.0.1:8080${CONTEXT}health || exit 1
+# Health check against the management port
+HEALTHCHECK --interval=30s --start-period=60s --timeout=3s CMD [ \
+    "/bin/sh", "-c", \
+    "curl -f -s --max-time 3 --noproxy '*' -o /dev/null http://127.0.0.1:9000/health" \
+]
 
 # metadata labels
 LABEL \

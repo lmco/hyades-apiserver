@@ -35,11 +35,11 @@ import io.swagger.v3.oas.models.media.MediaType;
 import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.parser.ObjectMapperFactory;
 import io.swagger.v3.parser.core.models.ParseOptions;
-import org.junit.Assert;
-
 import jakarta.ws.rs.client.ClientRequestContext;
 import jakarta.ws.rs.client.ClientResponseContext;
 import jakarta.ws.rs.client.ClientResponseFilter;
+import org.junit.jupiter.api.Assertions;
+
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -85,30 +85,55 @@ public class OpenApiValidationClientResponseFilter implements ClientResponseFilt
         final Operation operationDef = findOpenApiOperation(requestContext);
         if (operationDef == null) {
             // Undocumented request?
-            Assert.fail("No OpenAPI operation found for %s %s".formatted(
+            Assertions.fail("No OpenAPI operation found for %s %s".formatted(
                     requestContext.getMethod(), requestContext.getUri()));
         }
 
         // Read the response content and assign it back to the response context.
-        // Without this, clients won't be able to read the response anymore.
-        final byte[] responseBytes = responseContext.getEntityStream().readAllBytes();
-        responseContext.setEntityStream(new ByteArrayInputStream(responseBytes));
+        // Without this, clients won't be able to read the response any more.
+        final String responseText = new String(responseContext.getEntityStream().readAllBytes());
+        responseContext.setEntityStream(new ByteArrayInputStream(responseText.getBytes()));
 
         // Identity the correct response object in the spec based on the status.
         final String responseStatus = String.valueOf(responseContext.getStatus());
-        assertThat(operationDef.getResponses().keySet()).contains(responseStatus);
+        assertThat(operationDef.getResponses().keySet())
+                .as("""
+                                Got response with status %s, but the OpenAPI spec of \
+                                %s %s does not define it: %s""",
+                        responseStatus,
+                        requestContext.getMethod(),
+                        requestContext.getUri(),
+                        responseText)
+                .contains(responseStatus);
         final ApiResponse responseDef = operationDef.getResponses().get(responseStatus);
 
         // If the spec does not define a response, ensure that the actual
         // response is also empty.
         if (responseDef.getContent() == null) {
-            assertThat(responseBytes).asString().isEmpty();
+            assertThat(responseText).asString()
+                    .as("""
+                                    Got response with content, but the OpenAPI spec of \
+                                    %s %s -> %s does not define any: %s""",
+                            requestContext.getMethod(),
+                            requestContext.getUri(),
+                            responseStatus,
+                            responseText)
+                    .isEmpty();
             return;
         }
 
         // Identity the correct media type in the spec response.
         final String responseContentType = responseContext.getHeaderString("Content-Type");
-        assertThat(responseDef.getContent().keySet()).contains(responseContentType);
+        assertThat(responseDef.getContent().keySet())
+                .as("""
+                                Got response with content-type %s, but the OpenAPI spec of \
+                                %s %s -> %s does not define any responses for it: %s""",
+                        responseContentType,
+                        requestContext.getMethod(),
+                        requestContext.getUri(),
+                        responseStatus,
+                        responseText)
+                .contains(responseContentType);
         final MediaType mediaType = responseDef.getContent().get(responseContentType);
 
         // Serialize the response schema to JSON so it can be used for validation.
@@ -116,9 +141,17 @@ public class OpenApiValidationClientResponseFilter implements ClientResponseFilt
         final String schemaJson = objectMapper.writeValueAsString(mediaType.getSchema());
         final JsonSchema schema = SCHEMA_FACTORY.getSchema(schemaJson);
 
-        final Set<ValidationMessage> messages = schema.validate(
-                new String(responseBytes), InputFormat.JSON);
-        assertThat(messages).isEmpty();
+        final Set<ValidationMessage> messages = schema.validate(responseText, InputFormat.JSON);
+        assertThat(messages)
+                .as("""
+                                Got response content that failed to validate against the \
+                                OpenAPI spec of %s %s -> %s (%s): %s""",
+                        requestContext.getMethod(),
+                        requestContext.getUri(),
+                        responseStatus,
+                        responseContentType,
+                        responseText)
+                .isEmpty();
     }
 
     private Operation findOpenApiOperation(final ClientRequestContext requestContext) {

@@ -18,82 +18,94 @@
  */
 package org.dependencytrack.integrations.fortifyssc;
 
-import alpine.Config;
 import com.github.tomakehurst.wiremock.client.WireMock;
-import com.github.tomakehurst.wiremock.junit.WireMockRule;
+import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import com.github.tomakehurst.wiremock.matching.EqualToPattern;
 import org.apache.http.HttpHeaders;
 import org.apache.http.entity.ContentType;
-import org.dependencytrack.event.kafka.KafkaProducerInitializer;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
-import org.junit.Rule;
-import org.junit.Test;
+import org.dependencytrack.PersistenceCapableTest;
+import org.dependencytrack.secret.TestSecretManager;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.net.URL;
+import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
+import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 
-public class FortifySscClientTest {
 
-    @BeforeClass
-    public static void beforeClass() {
-        Config.enableUnitTests();
+class FortifySscClientTest extends PersistenceCapableTest {
+
+    @RegisterExtension
+    private static final WireMockExtension wireMock = WireMockExtension.newInstance()
+            .options(wireMockConfig().dynamicPort())
+            .build();
+
+    private static HttpClient httpClient;
+
+    @BeforeAll
+    static void beforeAll() {
+        httpClient = HttpClient.newHttpClient();
     }
 
-    @AfterClass
-    public static void after() {
-        KafkaProducerInitializer.tearDown();
+    @AfterAll
+    static void afterAll() {
+        if (httpClient != null) {
+            httpClient.close();
+        }
     }
-
-    @Rule
-    public WireMockRule wireMockRule = new WireMockRule();
 
     @Test
-    public void testOneTimeTokenPositiveCase() throws Exception {
-        WireMock.stubFor(WireMock.post(WireMock.urlPathEqualTo("/ssc/api/v1/fileTokens"))
+    void testOneTimeTokenPositiveCase() throws Exception {
+        wireMock.stubFor(WireMock.post(WireMock.urlPathEqualTo("/ssc/api/v1/fileTokens"))
                 .withHeader(HttpHeaders.AUTHORIZATION, new EqualToPattern("FortifyToken " + Base64.getEncoder().encodeToString("2d5e4a06-945e-405f-a3c2-112bb3053453".getBytes(StandardCharsets.UTF_8))))
                 .withRequestBody(WireMock.equalToJson("{\"fileTokenType\":\"UPLOAD\"}"))
                 .willReturn(WireMock.aResponse().withHeader(HttpHeaders.CONTENT_TYPE, "application/json")
                         .withBody("{ \"data\": { \"token\": \"db975c97-98b1-4988-8d6a-9c3e044dfff3\" }}").withStatus(201)));
-        FortifySscUploader uploader = new FortifySscUploader();
-        FortifySscClient client = new FortifySscClient(uploader, new URL(wireMockRule.baseUrl() + "/ssc"));
+        FortifySscUploader uploader = new FortifySscUploader(httpClient, new TestSecretManager());
+        uploader.setQueryManager(qm);
+        FortifySscClient client = new FortifySscClient(httpClient, uploader, new URL(wireMock.baseUrl() + "/ssc"));
         String token = client.generateOneTimeUploadToken("2d5e4a06-945e-405f-a3c2-112bb3053453");
-        Assert.assertEquals("db975c97-98b1-4988-8d6a-9c3e044dfff3", token);
+        Assertions.assertEquals("db975c97-98b1-4988-8d6a-9c3e044dfff3", token);
     }
 
     @Test
-    public void testOneTimeTokenInvalidCredentials() throws Exception {
-        WireMock.stubFor(WireMock.post(WireMock.urlPathEqualTo("/ssc/api/v1/fileTokens"))
+    void testOneTimeTokenInvalidCredentials() throws Exception {
+        wireMock.stubFor(WireMock.post(WireMock.urlPathEqualTo("/ssc/api/v1/fileTokens"))
                 .withHeader(HttpHeaders.AUTHORIZATION, new EqualToPattern("FortifyToken " + Base64.getEncoder().encodeToString("wrong".getBytes(StandardCharsets.UTF_8))))
                 .withRequestBody(WireMock.equalToJson("{\"fileTokenType\":\"UPLOAD\"}"))
                 .willReturn(WireMock.aResponse().withHeader(HttpHeaders.CONTENT_TYPE, "application/json").withStatus(401)));
-        FortifySscUploader uploader = new FortifySscUploader();
-        FortifySscClient client = new FortifySscClient(uploader, new URL(wireMockRule.baseUrl() + "/ssc"));
+        FortifySscUploader uploader = new FortifySscUploader(httpClient, new TestSecretManager());
+        uploader.setQueryManager(qm);
+        FortifySscClient client = new FortifySscClient(httpClient, uploader, new URL(wireMock.baseUrl() + "/ssc"));
         String token = client.generateOneTimeUploadToken("wrong");
-        Assert.assertNull(token);
+        Assertions.assertNull(token);
     }
 
     @Test
-    public void testUploadFindingsPositiveCase() throws Exception {
+    void testUploadFindingsPositiveCase() throws Exception {
         String token = "db975c97-98b1-4988-8d6a-9c3e044dfff3";
         String applicationVersion = "12345";
-        WireMock.stubFor(WireMock.post(WireMock.urlPathEqualTo("/ssc/upload/resultFileUpload.html"))
+        wireMock.stubFor(WireMock.post(WireMock.urlPathEqualTo("/ssc/upload/resultFileUpload.html"))
                 .withHeader(HttpHeaders.ACCEPT, new EqualToPattern("application/xml"))
                 .withQueryParam("engineType", new EqualToPattern("DEPENDENCY_TRACK"))
                 .withQueryParam("mat", new EqualToPattern(token))
                 .withQueryParam("entityId", new EqualToPattern(applicationVersion))
                 .willReturn(WireMock.aResponse().withHeader(HttpHeaders.CONTENT_TYPE, "application/xml").withStatus(200)));
-        FortifySscUploader uploader = new FortifySscUploader();
-        FortifySscClient client = new FortifySscClient(uploader, new URL(wireMockRule.baseUrl() + "/ssc"));
+        FortifySscUploader uploader = new FortifySscUploader(httpClient, new TestSecretManager());
+        uploader.setQueryManager(qm);
+        FortifySscClient client = new FortifySscClient(httpClient, uploader, new URL(wireMock.baseUrl() + "/ssc"));
         InputStream stream = new ByteArrayInputStream("test input".getBytes());
         client.uploadDependencyTrackFindings(token, applicationVersion, stream);
 
-        WireMock.verify(WireMock.postRequestedFor(WireMock.urlPathEqualTo("/ssc/upload/resultFileUpload.html"))
+        wireMock.verify(WireMock.postRequestedFor(WireMock.urlPathEqualTo("/ssc/upload/resultFileUpload.html"))
                 .withQueryParam("engineType", new EqualToPattern("DEPENDENCY_TRACK"))
                 .withQueryParam("mat", new EqualToPattern(token))
                 .withQueryParam("entityId", new EqualToPattern(applicationVersion))
@@ -102,21 +114,22 @@ public class FortifySscClientTest {
     }
 
     @Test
-    public void testUploadFindingsNegativeCase() throws Exception {
+    void testUploadFindingsNegativeCase() throws Exception {
         String token = "db975c97-98b1-4988-8d6a-9c3e044dfff3";
         String applicationVersion = "";
-        WireMock.stubFor(WireMock.post(WireMock.urlPathEqualTo("/ssc/upload/resultFileUpload.html"))
+        wireMock.stubFor(WireMock.post(WireMock.urlPathEqualTo("/ssc/upload/resultFileUpload.html"))
                 .withHeader(HttpHeaders.ACCEPT, new EqualToPattern("application/xml"))
                 .withQueryParam("engineType", new EqualToPattern("DEPENDENCY_TRACK"))
                 .withQueryParam("mat", new EqualToPattern(token))
                 .withQueryParam("entityId", new EqualToPattern(applicationVersion))
                 .willReturn(WireMock.aResponse().withHeader(HttpHeaders.CONTENT_TYPE, "application/xml").withStatus(400)));
-        FortifySscUploader uploader = new FortifySscUploader();
-        FortifySscClient client = new FortifySscClient(uploader, new URL(wireMockRule.baseUrl() + "/ssc"));
+        FortifySscUploader uploader = new FortifySscUploader(httpClient, new TestSecretManager());
+        uploader.setQueryManager(qm);
+        FortifySscClient client = new FortifySscClient(httpClient, uploader, new URL(wireMock.baseUrl() + "/ssc"));
         InputStream stream = new ByteArrayInputStream("test input".getBytes());
         client.uploadDependencyTrackFindings(token, applicationVersion, stream);
 
-        WireMock.verify(WireMock.postRequestedFor(WireMock.urlPathEqualTo("/ssc/upload/resultFileUpload.html"))
+        wireMock.verify(WireMock.postRequestedFor(WireMock.urlPathEqualTo("/ssc/upload/resultFileUpload.html"))
                 .withQueryParam("engineType", new EqualToPattern("DEPENDENCY_TRACK"))
                 .withQueryParam("mat", new EqualToPattern(token))
                 .withQueryParam("entityId", new EqualToPattern(applicationVersion))

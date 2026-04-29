@@ -18,32 +18,35 @@
  */
 package alpine.event.framework;
 
-import alpine.common.logging.Logger;
-import alpine.common.metrics.Metrics;
-import alpine.model.EventServiceLog;
-import alpine.persistence.AlpineQueryManager;
 import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.Metrics;
 import io.micrometer.core.instrument.Timer;
-import org.apache.commons.lang3.concurrent.BasicThreadFactory;
+import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.time.Duration;
-import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
-import static alpine.common.util.ExecutorUtil.getExecutorStats;
 
 /**
  * A publish/subscribe (pub/sub) event service that provides the ability to publish events and
  * asynchronously inform all subscribers to subscribed events.
- *
+ * <p>
  * Defaults to a single thread event system when extending this class. This can be changed by
  * specifying an alternative executor service.
  *
@@ -52,147 +55,191 @@ import static alpine.common.util.ExecutorUtil.getExecutorStats;
  */
 public abstract class BaseEventService implements IEventService {
 
-    private Logger logger = Logger.getLogger(BaseEventService.class);
-    private final Map<Class<? extends Event>, ArrayList<Class<? extends Subscriber>>> subscriptionMap = new ConcurrentHashMap<>();
-    private final Map<UUID, ArrayList<UUID>>chainTracker = new ConcurrentHashMap<>();
-    private ExecutorService executor = Executors.newFixedThreadPool(1, new BasicThreadFactory.Builder()
-            .namingPattern("Alpine-BaseEventService-%d")
-            .uncaughtExceptionHandler(new LoggableUncaughtExceptionHandler())
-            .build()
-    );
-    private final ExecutorService dynamicExecutor = Executors.newWorkStealingPool();
+    public enum Status {
 
-    /**
-     * @param executor an ExecutorService instance
-     * @since 1.0.0
-     */
-    protected void setExecutorService(ExecutorService executor) {
-        this.executor = executor;
+        RUNNING(1, 2), // 0
+        PAUSED(0, 2),  // 1
+        STOPPING(3),   // 2
+        STOPPED;       // 3
+
+        private final Set<Integer> allowedTransitions;
+
+        Status(final Integer... allowedTransitions) {
+            this.allowedTransitions = Set.of(allowedTransitions);
+        }
+
+        private boolean canTransitionTo(final Status newStatus) {
+            return allowedTransitions.contains(newStatus.ordinal());
+        }
+
     }
 
-    /**
-     * @param logger the logger instance to use for the executed event
-     * @since 1.0.0
-     */
-    protected void setLogger(Logger logger) {
-        this.logger = logger;
+    record ExecutorConfig(ExecutorService executor, @Nullable Semaphore semaphore) {
+    }
+
+    private final Map<Class<? extends Event>, ArrayList<Subscriber>> subscriptionMap = new ConcurrentHashMap<>();
+    private final Map<UUID, ArrayList<UUID>> chainTracker = new ConcurrentHashMap<>();
+    private volatile ExecutorService executor;
+    private volatile @Nullable Semaphore semaphore;
+    private final Logger logger = LoggerFactory.getLogger(getClass());
+    private final Lock statusLock = new ReentrantLock();
+    private volatile Status status = Status.RUNNING;
+
+    BaseEventService(ExecutorService executor, @Nullable Semaphore semaphore) {
+        this.executor = executor;
+        this.semaphore = semaphore;
+    }
+
+    abstract ExecutorConfig executorConfig();
+
+    ExecutorService getExecutor() {
+        return executor;
     }
 
     /**
      * {@inheritDoc}
+     *
      * @since 1.0.0
      */
+    @Override
     public void publish(Event event) {
-        logger.debug("Dispatching event: " + event.getClass().toString());
-        final ArrayList<Class<? extends Subscriber>> subscriberClasses = subscriptionMap.get(event.getClass());
-        if (subscriberClasses == null) {
-            logger.debug("No subscribers to inform from event: " + event.getClass().getName());
+        final Status currentStatus = status;
+        if (currentStatus != Status.RUNNING) {
+            logger.warn("Service is {}; Not dispatching event: {}", currentStatus, event);
             return;
         }
-        for (Class<? extends Subscriber> clazz: subscriberClasses) {
-            logger.debug("Alerting subscriber " + clazz.getName());
 
-            if (event instanceof ChainableEvent) {
-                if (! addTrackedEvent((ChainableEvent)event)) {
+        logger.debug("Dispatching event: {}", event.getClass());
+        final ArrayList<Subscriber> subscribers = subscriptionMap.get(event.getClass());
+        if (subscribers == null) {
+            logger.debug("No subscribers to inform from event: {}", event.getClass().getName());
+            return;
+        }
+        for (final Subscriber subscriber : subscribers) {
+            logger.debug("Alerting subscriber {}", subscriber.getClass().getName());
+
+            if (event instanceof final ChainableEvent chainableEvent) {
+                if (!addTrackedEvent(chainableEvent)) {
                     return;
                 }
             }
 
-            // Check to see if the Event is Unblocked. If so, use a separate executor pool from normal events
-            final ExecutorService executorService = event instanceof UnblockedEvent  ? dynamicExecutor : executor;
-
-            executorService.execute(() -> {
-                try (AlpineQueryManager qm = new AlpineQueryManager()) {
-                    final EventServiceLog eventServiceLog = qm.createEventServiceLog(clazz);
-                    final Subscriber subscriber = clazz.getDeclaredConstructor().newInstance();
-                    final Timer.Sample timerSample = Timer.start();
+            final Semaphore currentSemaphore = semaphore;
+            try {
+                executor.execute(() -> {
+                    boolean semaphoreAcquired = false;
                     try {
-                        subscriber.inform(event);
-                    } finally {
-                        timerSample.stop(Timer.builder("alpine_event_processing")
-                                .tag("event", event.getClass().getSimpleName())
-                                .tag("subscriber", clazz.getSimpleName())
-                                .register(Metrics.getRegistry()));
-                    }
-                    qm.updateEventServiceLog(eventServiceLog);
-                    if (event instanceof ChainableEvent) {
-                        ChainableEvent chainableEvent = (ChainableEvent)event;
-                        logger.debug("Calling onSuccess");
-                        for (ChainLink chainLink: chainableEvent.onSuccess()) {
-                            if (chainLink.getSuccessEventService() != null) {
-                                Method method = chainLink.getSuccessEventService().getMethod("getInstance");
-                                IEventService es = (IEventService) method.invoke(chainLink.getSuccessEventService(), new Object[0]);
-                                es.publish(chainLink.getSuccessEvent());
-                            } else {
-                                Event.dispatch(chainLink.getSuccessEvent());
+                        if (currentSemaphore != null) {
+                            try {
+                                currentSemaphore.acquire();
+                                semaphoreAcquired = true;
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                                logger.debug("Interrupted while waiting for semaphore; Skipping event: {}", event);
+                                return;
                             }
                         }
-                    }
-                } catch (NoSuchMethodException | InvocationTargetException | InstantiationException | IllegalAccessException | SecurityException e) {
-                    logger.error("An error occurred while informing subscriber: " + e);
-                    if (event instanceof ChainableEvent) {
-                        ChainableEvent chainableEvent = (ChainableEvent)event;
-                        logger.debug("Calling onFailure");
-                        for (ChainLink chainLink: chainableEvent.onFailure()) {
-                            if (chainLink.getFailureEventService() != null) {
-                                try {
-                                    Method method = chainLink.getFailureEventService().getMethod("getInstance");
-                                    IEventService es = (IEventService) method.invoke(chainLink.getFailureEventService(), new Object[0]);
-                                    es.publish(chainLink.getFailureEvent());
-                                } catch (NoSuchMethodException | InvocationTargetException | IllegalAccessException ex) {
-                                    logger.error("Exception while calling onFailure callback", ex);
+                        final Timer.Sample timerSample = Timer.start();
+                        try {
+                            subscriber.inform(event);
+                        } finally {
+                            timerSample.stop(Timer.builder("alpine_event_processing")
+                                    .tag("event", event.getClass().getSimpleName())
+                                    .tag("subscriber", subscriber.getClass().getSimpleName())
+                                    .register(Metrics.globalRegistry));
+                        }
+                        if (event instanceof final ChainableEvent chainableEvent) {
+                            logger.debug("Calling onSuccess");
+                            for (ChainLink chainLink : chainableEvent.onSuccess()) {
+                                if (chainLink.getSuccessEventService() != null) {
+                                    Method method = chainLink.getSuccessEventService().getMethod("getInstance");
+                                    IEventService es = (IEventService) method.invoke(chainLink.getSuccessEventService(), new Object[0]);
+                                    es.publish(chainLink.getSuccessEvent());
+                                } else {
+                                    Event.dispatch(chainLink.getSuccessEvent());
                                 }
-                            } else {
-                                Event.dispatch(chainLink.getFailureEvent());
                             }
                         }
+                    } catch (NoSuchMethodException | InvocationTargetException |
+                             IllegalAccessException | SecurityException e) {
+                        logger.error("An error occurred while informing subscriber", e);
+                        if (event instanceof final ChainableEvent chainableEvent) {
+                            logger.debug("Calling onFailure");
+                            for (ChainLink chainLink : chainableEvent.onFailure()) {
+                                if (chainLink.getFailureEventService() != null) {
+                                    try {
+                                        Method method = chainLink.getFailureEventService().getMethod("getInstance");
+                                        IEventService es = (IEventService) method.invoke(chainLink.getFailureEventService(), new Object[0]);
+                                        es.publish(chainLink.getFailureEvent());
+                                    } catch (NoSuchMethodException | InvocationTargetException |
+                                             IllegalAccessException ex) {
+                                        logger.error("Exception while calling onFailure callback", ex);
+                                    }
+                                } else {
+                                    Event.dispatch(chainLink.getFailureEvent());
+                                }
+                            }
+                        }
+                    } finally {
+                        if (semaphoreAcquired) {
+                            currentSemaphore.release();
+                        }
+                        if (event instanceof final ChainableEvent chainableEvent) {
+                            removeTrackedEvent(chainableEvent);
+                        }
                     }
-                } finally {
-                    if (event instanceof ChainableEvent) {
-                        removeTrackedEvent((ChainableEvent)event);
-                    }
+                });
+            } catch (RejectedExecutionException e) {
+                logger.warn("Executor rejected task; Skipping event: {}", event);
+                if (event instanceof final ChainableEvent chainableEvent) {
+                    removeTrackedEvent(chainableEvent);
                 }
-            });
+            }
         }
         recordPublishedMetric(event);
     }
 
     /**
      * {@inheritDoc}
+     *
      * @since 1.4.0
      */
+    @Override
     public synchronized boolean isEventBeingProcessed(ChainableEvent event) {
         return isEventBeingProcessed(event.getChainIdentifier());
     }
 
     /**
      * {@inheritDoc}
+     *
      * @since 1.4.0
      */
+    @Override
     public synchronized boolean isEventBeingProcessed(UUID chainIdentifier) {
         ArrayList<UUID> eventIdentifiers = chainTracker.get(chainIdentifier);
-        return eventIdentifiers != null && eventIdentifiers.size() != 0;
+        return eventIdentifiers != null && !eventIdentifiers.isEmpty();
     }
 
     private synchronized boolean addTrackedEvent(ChainableEvent event) {
-            ArrayList<UUID> eventIdentifiers = chainTracker.get(event.getChainIdentifier());
-            if (eventIdentifiers == null) {
-                eventIdentifiers = new ArrayList<>();
-            }
-            if (event instanceof SingletonCapableEvent) {
-                final SingletonCapableEvent sEvent = (SingletonCapableEvent)event;
-                // Check is this is a singleton event where only a
-                // single occurrence should be running at a given time
-                if (sEvent.isSingleton()) {
-                    if (! eventIdentifiers.isEmpty()) {
-                        logger.info("An singleton event (" + sEvent.getClass().getSimpleName() + ") was received but another singleton event of the same type is already in progress. Skipping.");
-                        return false;
-                    }
+        ArrayList<UUID> eventIdentifiers = chainTracker.get(event.getChainIdentifier());
+        if (eventIdentifiers == null) {
+            eventIdentifiers = new ArrayList<>();
+        }
+        if (event instanceof final SingletonCapableEvent singletonEvent) {
+            // Check is this is a singleton event where only a
+            // single occurrence should be running at a given time
+            if (singletonEvent.isSingleton()) {
+                if (!eventIdentifiers.isEmpty()) {
+                    logger.info("""
+                            A singleton event ({}) was received but another singleton event \
+                            of the same type is already in progress; Skipping""", singletonEvent.getClass().getSimpleName());
+                    return false;
                 }
             }
-            eventIdentifiers.add(event.getEventIdentifier());
-            chainTracker.put(event.getChainIdentifier(), eventIdentifiers);
-            return true;
+        }
+        eventIdentifiers.add(event.getEventIdentifier());
+        chainTracker.put(event.getChainIdentifier(), eventIdentifiers);
+        return true;
     }
 
     private synchronized void removeTrackedEvent(ChainableEvent event) {
@@ -210,79 +257,120 @@ public abstract class BaseEventService implements IEventService {
         Counter.builder("alpine_events_published_total")
                 .description("Total number of published events")
                 .tags("event", event.getClass().getName(), "publisher", this.getClass().getName())
-                .register(Metrics.getRegistry())
+                .register(Metrics.globalRegistry)
                 .increment();
     }
 
     /**
      * {@inheritDoc}
+     *
      * @since 1.0.0
      */
-    public void subscribe(Class<? extends Event> eventType, Class<? extends Subscriber> subscriberType) {
+    @Override
+    public void subscribe(Class<? extends Event> eventType, Subscriber subscriber) {
         if (!subscriptionMap.containsKey(eventType)) {
             subscriptionMap.put(eventType, new ArrayList<>());
         }
-        final ArrayList<Class<? extends Subscriber>> subscribers = subscriptionMap.get(eventType);
-        if (!subscribers.contains(subscriberType)) {
-            subscribers.add(subscriberType);
+        final ArrayList<Subscriber> subscribers = subscriptionMap.get(eventType);
+        if (subscribers.stream().map(Object::getClass).noneMatch(clazz -> clazz.equals(subscriber.getClass()))) {
+            subscribers.add(subscriber);
         }
     }
 
     /**
      * {@inheritDoc}
+     *
      * @since 1.0.0
      */
+    @Override
     public void unsubscribe(Class<? extends Subscriber> subscriberType) {
-        for (ArrayList<Class<? extends Subscriber>> list : subscriptionMap.values()) {
-            list.remove(subscriberType);
+        for (ArrayList<Subscriber> list : subscriptionMap.values()) {
+            list.removeIf(subscriber -> subscriberType.equals(subscriber.getClass()));
         }
     }
 
     /**
      * {@inheritDoc}
+     *
      * @since 1.2.0
      */
+    @Override
     public boolean hasSubscriptions(Event event) {
-        final ArrayList<Class<? extends Subscriber>> subscriberClasses = subscriptionMap.get(event.getClass());
-        return subscriberClasses != null;
+        final ArrayList<Subscriber> subscribers = subscriptionMap.get(event.getClass());
+        return subscribers != null && !subscribers.isEmpty();
     }
 
-    /**
-     * {@inheritDoc}
-     * @since 1.0.0
-     */
-    public void shutdown() {
-        logger.info("Shutting down EventService");
+    public Status getStatus() {
+        return status;
+    }
+
+    public void drain(final Duration timeout) throws TimeoutException {
+        setStatus(Status.PAUSED);
         executor.shutdown();
-        dynamicExecutor.shutdown();
+
+        try {
+            if (!executor.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+                throw new TimeoutException("Timed out while waiting for processing of active tasks to complete");
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted while waiting for processing of active tasks to complete", e);
+        }
+
+        final ExecutorConfig config = executorConfig();
+        this.executor = config.executor();
+        this.semaphore = config.semaphore();
+
+        setStatus(Status.RUNNING);
     }
 
     /**
      * {@inheritDoc}
      */
     @Override
-    public boolean shutdown(final Duration timeout) {
-        shutdown();
+    public void shutdown(final Duration timeout) throws TimeoutException {
+        setStatus(Status.STOPPING);
+        executor.shutdown();
 
-        final Instant waitTimeout = Instant.now().plus(timeout);
-        Instant statsLastLoggedAt = null;
-        while (!executor.isTerminated() || !dynamicExecutor.isTerminated()) {
-            if (waitTimeout.isBefore(Instant.now())) {
-                logger.warn("Timeout exceeded while waiting for executors to finish: executor=%s, dynamicExecutor=%s"
-                        .formatted(getExecutorStats(executor), getExecutorStats(dynamicExecutor)));
-                return false;
-            }
+        try {
+            if (!executor.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+                final List<Runnable> pendingTasks = executor.shutdownNow();
+                if (!pendingTasks.isEmpty()) {
+                    logger.warn(
+                            "Forcefully shutting down; {} pending tasks will not be executed",
+                            pendingTasks.size());
+                }
+                if (!executor.awaitTermination(3, TimeUnit.SECONDS)) {
+                    logger.warn("Executor did not terminate within grace period after interruption");
+                }
 
-            final Instant now = Instant.now();
-            if (statsLastLoggedAt == null || now.minus(5, ChronoUnit.SECONDS).isAfter(statsLastLoggedAt)) {
-                logger.info("Waiting for executors to terminate: executor=%s, dynamicExecutor=%s"
-                        .formatted(getExecutorStats(executor), getExecutorStats(dynamicExecutor)));
-                statsLastLoggedAt = now;
+                throw new TimeoutException("Timeout exceeded while waiting for executor to terminate");
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
 
-        logger.info("Executors terminated successfully");
-        return true;
+        setStatus(Status.STOPPED);
+    }
+
+    private void setStatus(final Status newStatus) {
+        statusLock.lock();
+        try {
+            if (this.status == newStatus) {
+                return;
+            }
+
+            if (this.status.canTransitionTo(newStatus)) {
+                logger.info("Transitioning from status {} to {}", this.status, newStatus);
+                this.status = newStatus;
+                return;
+            }
+
+            throw new IllegalStateException(
+                    "Can not transition from status %s to %s".formatted(this.status, newStatus));
+        } finally {
+            statusLock.unlock();
+        }
     }
 
 }

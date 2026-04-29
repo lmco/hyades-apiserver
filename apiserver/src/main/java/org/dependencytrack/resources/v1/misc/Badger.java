@@ -18,10 +18,10 @@
  */
 package org.dependencytrack.resources.v1.misc;
 
-import alpine.common.logging.Logger;
 import io.pebbletemplates.pebble.PebbleEngine;
 import io.pebbletemplates.pebble.template.PebbleTemplate;
 import org.dependencytrack.model.ProjectMetrics;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.StringWriter;
@@ -45,9 +45,12 @@ public class Badger {
     private static final PebbleTemplate PROJECT_VIOLATIONS_NONE_TEMPLATE = ENGINE.getTemplate("templates/badge/project-violations-none.peb");
     private static final PebbleTemplate PROJECT_VIOLATIONS_NO_METRICS_TEMPLATE = ENGINE.getTemplate("templates/badge/project-violations-nometrics.peb");
 
-    public String generateVulnerabilities(ProjectMetrics metrics) {
+    public String generateVulnerabilities(ProjectMetrics metrics, String linkToProjectVuln) {
         final Map<String, Object> context = new HashMap<>();
         context.put("roundedPixels", "3");
+        if (linkToProjectVuln != null && !linkToProjectVuln.isBlank()) {
+            context.put("href", linkToProjectVuln);
+        }
         if (metrics == null) {
             return writeSvg(PROJECT_VULNS_NO_METRICS_TEMPLATE, context);
         } else if (metrics.getVulnerabilities() > 0) {
@@ -62,9 +65,12 @@ public class Badger {
         }
     }
 
-    public String generateViolations(ProjectMetrics metrics) {
+    public String generateViolations(ProjectMetrics metrics, String linkToProjectViolations) {
         final Map<String, Object> context = new HashMap<>();
         context.put("roundedPixels", "3");
+        if (linkToProjectViolations != null && !linkToProjectViolations.isBlank()) {
+            context.put("href", linkToProjectViolations);
+        }
         if (metrics == null) {
             return writeSvg(PROJECT_VIOLATIONS_NO_METRICS_TEMPLATE, context);
         } else if (metrics.getPolicyViolationsTotal() > 0) {
@@ -82,7 +88,7 @@ public class Badger {
             template.evaluate(writer, context);
             return writer.toString();
         } catch (IOException e) {
-            Logger.getLogger(this.getClass()).error("An error was encountered evaluating template", e);
+            LoggerFactory.getLogger(this.getClass()).error("An error was encountered evaluating template", e);
             return null;
         }
     }

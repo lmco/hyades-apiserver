@@ -32,7 +32,7 @@ import org.dependencytrack.auth.Permissions;
 import org.dependencytrack.persistence.jdbi.ApiRequestConfig.OrderingColumn;
 import org.jdbi.v3.core.statement.StatementContext;
 import org.jdbi.v3.core.statement.StatementCustomizer;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
 
 import java.sql.PreparedStatement;
 import java.util.Collections;
@@ -427,12 +427,11 @@ public class ApiRequestStatementCustomizerTest extends PersistenceCapableTest {
                               FROM "PROJECT"
                              WHERE EXISTS(
                                SELECT 1
-                                 FROM "USER_PROJECT_EFFECTIVE_PERMISSIONS" AS upep
+                                 FROM "PROJECT_ACCESS_USERS" AS pau
                                 INNER JOIN "PROJECT_HIERARCHY" AS ph
-                                   ON ph."PARENT_PROJECT_ID" = upep."PROJECT_ID"
+                                   ON ph."PARENT_PROJECT_ID" = pau."PROJECT_ID"
                                 WHERE ph."CHILD_PROJECT_ID" = "PROJECT"."ID"
-                                  AND upep."USER_ID" = :projectAclUserId
-                                  AND upep."PERMISSION_NAME" = 'VIEW_PORTFOLIO'
+                                  AND pau."USER_ID" = :projectAclUserId
                              )
                             """);
 
@@ -610,15 +609,17 @@ public class ApiRequestStatementCustomizerTest extends PersistenceCapableTest {
                               FROM "PROJECT"
                              WHERE EXISTS(
                                SELECT 1
-                                 FROM "PROJECT_ACCESS_TEAMS" AS pat
+                                 FROM "APIKEYS_TEAMS" AS akt
+                                INNER JOIN "PROJECT_ACCESS_TEAMS" AS pat
+                                   ON pat."TEAM_ID" = akt."TEAM_ID"
                                 INNER JOIN "PROJECT_HIERARCHY" AS ph
                                    ON ph."PARENT_PROJECT_ID" = pat."PROJECT_ID"
-                                WHERE pat."TEAM_ID" = ANY(:projectAclTeamIds)
+                                WHERE akt."APIKEY_ID" = :projectAclApiKeyId
                                   AND ph."CHILD_PROJECT_ID" = "PROJECT"."ID"
                              )
                             """);
 
-                    assertThat(ctx.getBinding()).hasToString("{named:{projectAclTeamIds:[%s]}}".formatted(team.getId()));
+                    assertThat(ctx.getBinding()).hasToString("{named:{projectAclApiKeyId:%s}}".formatted(apiKey.getId()));
                 }))
                 .createQuery(TEST_QUERY_TEMPLATE)
                 .mapTo(Integer.class)
@@ -654,15 +655,17 @@ public class ApiRequestStatementCustomizerTest extends PersistenceCapableTest {
                               FROM "PROJECT"
                              WHERE EXISTS(
                                SELECT 1
-                                 FROM "PROJECT_ACCESS_TEAMS" AS pat
+                                 FROM "APIKEYS_TEAMS" AS akt
+                                INNER JOIN "PROJECT_ACCESS_TEAMS" AS pat
+                                   ON pat."TEAM_ID" = akt."TEAM_ID"
                                 INNER JOIN "PROJECT_HIERARCHY" AS ph
                                    ON ph."PARENT_PROJECT_ID" = pat."PROJECT_ID"
-                                WHERE pat."TEAM_ID" = ANY(:projectAclTeamIds)
+                                WHERE akt."APIKEY_ID" = :projectAclApiKeyId
                                   AND ph."CHILD_PROJECT_ID" = "PROJECT"."PARENT_PROJECT_ID"
                              )
                             """);
 
-                    assertThat(ctx.getBinding()).hasToString("{named:{projectAclTeamIds:[%s]}}".formatted(team.getId()));
+                    assertThat(ctx.getBinding()).hasToString("{named:{projectAclApiKeyId:%s}}".formatted(apiKey.getId()));
                 }))
                 .addCustomizer(new DefineApiProjectAclCondition.StatementCustomizer(
                         JdbiAttributes.ATTRIBUTE_API_PROJECT_ACL_CONDITION,
@@ -700,12 +703,11 @@ public class ApiRequestStatementCustomizerTest extends PersistenceCapableTest {
                               FROM "PROJECT"
                              WHERE EXISTS(
                                SELECT 1
-                                FROM "USER_PROJECT_EFFECTIVE_PERMISSIONS" AS upep
+                                FROM "PROJECT_ACCESS_USERS" AS pau
                                INNER JOIN "PROJECT_HIERARCHY" AS ph
-                                  ON ph."PARENT_PROJECT_ID" = upep."PROJECT_ID"
+                                  ON ph."PARENT_PROJECT_ID" = pau."PROJECT_ID"
                                WHERE ph."CHILD_PROJECT_ID" = "PROJECT"."PARENT_PROJECT_ID"
-                                 AND upep."USER_ID" = :projectAclUserId
-                                 AND upep."PERMISSION_NAME" = 'VIEW_PORTFOLIO'
+                                 AND pau."USER_ID" = :projectAclUserId
                              )
                             """);
 

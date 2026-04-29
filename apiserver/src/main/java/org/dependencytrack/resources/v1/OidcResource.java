@@ -18,13 +18,11 @@
  */
 package org.dependencytrack.resources.v1;
 
-import alpine.common.logging.Logger;
 import alpine.model.MappedOidcGroup;
 import alpine.model.OidcGroup;
 import alpine.model.Team;
 import alpine.server.auth.AuthenticationNotRequired;
 import alpine.server.auth.PermissionRequired;
-import alpine.server.resources.AlpineResource;
 import alpine.server.util.OidcUtil;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -50,8 +48,11 @@ import jakarta.ws.rs.core.Response;
 import org.dependencytrack.auth.Permissions;
 import org.dependencytrack.model.validation.ValidUuid;
 import org.dependencytrack.persistence.QueryManager;
+import org.dependencytrack.resources.AbstractApiResource;
 import org.dependencytrack.resources.v1.vo.MappedOidcGroupRequest;
 import org.owasp.security.logging.SecurityMarkers;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -67,9 +68,9 @@ import java.util.stream.Collectors;
         @SecurityRequirement(name = "ApiKeyAuth"),
         @SecurityRequirement(name = "BearerAuth")
 })
-public class OidcResource extends AlpineResource {
+public class OidcResource extends AbstractApiResource {
 
-    private static final Logger LOGGER = Logger.getLogger(OidcResource.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(OidcResource.class);
 
     @GET
     @Path("/available")
@@ -280,12 +281,13 @@ public class OidcResource extends AlpineResource {
                     return Response.status(Response.Status.NOT_FOUND).entity("A group with the specified UUID could not be found.").build();
                 }
 
-                if (!qm.isOidcGroupMapped(team, group)) {
+                final MappedOidcGroup existingMapping = qm.getMappedOidcGroup(team, group);
+                if (existingMapping == null) {
                     final MappedOidcGroup mappedOidcGroup = qm.createMappedOidcGroup(team, group);
                     super.logSecurityEvent(LOGGER, SecurityMarkers.SECURITY_AUDIT, "Mapping created for group " + group.getName() + " and team " + team.getName());
                     return Response.ok(mappedOidcGroup).build();
                 } else {
-                    return Response.status(Response.Status.CONFLICT).entity("A mapping for the same team and group already exists.").build();
+                    return Response.ok(existingMapping).build();
                 }
             });
         }

@@ -18,10 +18,13 @@
  */
 package alpine.common.util;
 
-import alpine.Config;
-import alpine.common.logging.Logger;
+import alpine.config.AlpineConfigKeys;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.Pair;
+import org.eclipse.microprofile.config.Config;
+import org.eclipse.microprofile.config.ConfigProvider;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.UnsupportedEncodingException;
 import java.net.MalformedURLException;
@@ -39,7 +42,7 @@ import java.util.Set;
  */
 public final class ProxyUtil {
 
-    private static final Logger LOGGER = Logger.getLogger(ProxyUtil.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(ProxyUtil.class);
 
     private ProxyUtil() {
     }
@@ -55,7 +58,7 @@ public final class ProxyUtil {
      */
     @SuppressWarnings("unused")
     public static ProxyConfig getProxyConfig() {
-        ProxyConfig proxyCfg = fromConfig(Config.getInstance());
+        ProxyConfig proxyCfg = fromConfig(ConfigProvider.getConfig());
         if (proxyCfg == null) {
             proxyCfg = fromEnvironment(System.getenv());
         }
@@ -75,21 +78,19 @@ public final class ProxyUtil {
             return null;
         }
 
-        final String host = config.getProperty(Config.AlpineKey.HTTP_PROXY_ADDRESS);
+        final String host = config.getOptionalValue(AlpineConfigKeys.HTTP_PROXY_ADDRESS, String.class).orElse(null);
         if (host == null) {
             return null;
         }
 
-        final int port = config.getPropertyAsInt(Config.AlpineKey.HTTP_PROXY_PORT);
-        final String username = config.getProperty(Config.AlpineKey.HTTP_PROXY_USERNAME);
-        final String password = config.getPropertyOrFile(Config.AlpineKey.HTTP_PROXY_PASSWORD);
-        final String noProxy = config.getProperty(Config.AlpineKey.NO_PROXY);
+        final Optional<Integer> port = config.getOptionalValue(AlpineConfigKeys.HTTP_PROXY_PORT, Integer.class);
+        final String username = config.getOptionalValue(AlpineConfigKeys.HTTP_PROXY_USERNAME, String.class).orElse(null);
+        final String password = config.getOptionalValue(AlpineConfigKeys.HTTP_PROXY_PASSWORD, String.class).orElse(null);
+        final String noProxy = config.getOptionalValue(AlpineConfigKeys.NO_PROXY, String.class).orElse(null);
 
         final var proxyCfg = new ProxyConfig();
         proxyCfg.setHost(host);
-        if (port != -1) {
-            proxyCfg.setPort(port);
-        }
+        port.ifPresent(proxyCfg::setPort);
 
         if (username != null) {
             final Pair<String, String> domainUsername = parseProxyUsername(username);

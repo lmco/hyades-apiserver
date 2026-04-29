@@ -17,26 +17,36 @@
   ~ SPDX-License-Identifier: Apache-2.0
   ~ Copyright (c) OWASP Foundation. All Rights Reserved.
   -->
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <groupId>org.dependencytrack</groupId>
     <artifactId>dependency-track-parent</artifactId>
     <packaging>pom</packaging>
-    <version>5.7.0-SNAPSHOT</version>
+    <version>5.7.0-alpha.4-SNAPSHOT</version>
 
     <modules>
+        <module>common</module>
+        <module>support/cyclonedx-proto</module>
         <module>support/datanucleus-plugin</module>
+        <module>support/jdbi</module>
         <module>support/liquibase</module>
+        <module>support/smallrye-config-secret-handler-file</module>
         <module>support/smallrye-config-source-memory</module>
         <module>api</module>
         <module>alpine</module>
+        <module>dex</module>
+        <module>plugin</module>
         <module>proto</module>
-        <module>plugin/api</module>
-        <module>persistence-migration</module>
-        <module>persistence-jooq</module>
+        <module>notification</module>
+        <module>cache</module>
+        <module>file-storage</module>
+        <module>migration</module>
+        <module>package-metadata</module>
+        <module>secret-management</module>
+        <module>vuln-analysis</module>
+        <module>vuln-data-source</module>
         <module>apiserver</module>
+        <module>e2e</module>
         <module>coverage-report</module>
     </modules>
 
@@ -72,9 +82,9 @@
     </developers>
 
     <scm>
-        <connection>scm:git:git@github.com:DependencyTrack/hyades-apiserver.git</connection>
-        <url>https://github.com/DependencyTrack/hyades-apiserver.git</url>
-        <developerConnection>scm:git:git@github.com:DependencyTrack/hyades-apiserver.git</developerConnection>
+        <connection>${scm.connection}</connection>
+        <developerConnection>${scm.developer.connection}</developerConnection>
+        <url>${scm.url}</url>
         <tag>HEAD</tag>
     </scm>
 
@@ -95,36 +105,87 @@
         <project.parentBaseDir>.</project.parentBaseDir>
 
         <!-- Dependency versions -->
-        <lib.assertj.version>3.27.4</lib.assertj.version>
-        <lib.cel-java.version>0.5.3</lib.cel-java.version>
+        <lib.ae-security.version>0.154.0</lib.ae-security.version>
+        <lib.archunit.version>1.4.1</lib.archunit.version>
+        <lib.assertj.version>3.27.7</lib.assertj.version>
+        <lib.awaitility.version>4.3.0</lib.awaitility.version>
+        <lib.caffeine.version>3.2.3</lib.caffeine.version>
+        <lib.cel-java.version>0.12.0</lib.cel-java.version>
+        <lib.cel-extensions.version>0.4.1</lib.cel-extensions.version>
+        <lib.commons-lang3.version>3.20.0</lib.commons-lang3.version>
+        <lib.cpe-parser.version>3.0.1</lib.cpe-parser.version>
         <lib.datanucleus-api-jdo.version>6.0.5</lib.datanucleus-api-jdo.version>
         <lib.datanucleus-core.version>6.0.11</lib.datanucleus-core.version>
         <lib.datanucleus-javax-jdo.version>3.2.1</lib.datanucleus-javax-jdo.version>
         <lib.datanucleus-rdbms.version>6.0.10</lib.datanucleus-rdbms.version>
-        <lib.jakarta-ee.version>10.0.0</lib.jakarta-ee.version>
-        <lib.java-uuid-generator.version>5.1.0</lib.java-uuid-generator.version>
-        <lib.jackson.version>2.20.0</lib.jackson.version>
-        <lib.jdbi.version>3.49.5</lib.jdbi.version>
-        <lib.jersey.version>3.1.11</lib.jersey.version>
-        <lib.jetty.version>12.1.0</lib.jetty.version>
-        <lib.jooq.version>3.20.6</lib.jooq.version>
-        <lib.junit4.version>4.13.2</lib.junit4.version>
-        <lib.junit-jupiter.version>5.13.4</lib.junit-jupiter.version>
+        <lib.flyway.version>12.4.0</lib.flyway.version>
+        <lib.eclipse-angus.version>2.0.5</lib.eclipse-angus.version>
+        <lib.greenmail.version>2.1.8</lib.greenmail.version>
+        <lib.hikaricp.version>7.0.2</lib.hikaricp.version>
+        <lib.httpclient5.version>5.6.1</lib.httpclient5.version>
+        <lib.jakarta-ee.version>11.0.0</lib.jakarta-ee.version>
+        <lib.java-uuid-generator.version>5.2.0</lib.java-uuid-generator.version>
+        <lib.jackson.version>2.21.2</lib.jackson.version>
+        <lib.jdbi.version>3.52.1</lib.jdbi.version>
+        <lib.jersey.version>4.0.2</lib.jersey.version>
+        <lib.jetty.version>12.1.8</lib.jetty.version>
+        <lib.json-schema-validator.version>1.5.9</lib.json-schema-validator.version>
+        <lib.json-unit.version>5.1.1</lib.json-unit.version>
+        <lib.jspecify.version>1.0.0</lib.jspecify.version>
+        <lib.junit-jupiter.version>6.0.3</lib.junit-jupiter.version>
+        <lib.kafka-clients.version>4.2.0</lib.kafka-clients.version>
+        <lib.kotlin.version>2.3.21</lib.kotlin.version>
         <lib.liquibase.version>4.33.0</lib.liquibase.version>
-        <lib.postgresql.version>42.7.7</lib.postgresql.version>
-        <lib.protobuf-java.version>4.32.0</lib.protobuf-java.version>
+        <lib.logback.version>1.5.32</lib.logback.version>
+        <lib.micrometer.version>1.16.5</lib.micrometer.version>
+        <lib.microprofile-config.version>3.1.1</lib.microprofile-config.version>
+        <lib.microprofile-health.version>4.0.1</lib.microprofile-health.version>
+        <lib.minio.version>8.6.0</lib.minio.version>
+        <lib.mockito.version>5.23.0</lib.mockito.version>
+        <lib.okhttp.version>5.3.2</lib.okhttp.version>
+        <lib.open-feign.version>13.12</lib.open-feign.version>
+        <lib.open-vulnerability-clients.version>9.0.5</lib.open-vulnerability-clients.version>
+        <lib.packageurl.version>1.5.0</lib.packageurl.version>
+        <lib.pebble.version>4.1.1</lib.pebble.version>
+        <lib.postgresql.version>42.7.10</lib.postgresql.version>
+        <lib.protobuf-java.version>4.34.1</lib.protobuf-java.version>
+        <lib.resilience4j.version>2.4.0</lib.resilience4j.version>
+        <lib.s3mock.version>5.0.0</lib.s3mock.version>
         <lib.slf4j.version>2.0.17</lib.slf4j.version>
-        <lib.smallrye-config.version>3.13.4</lib.smallrye-config.version>
-        <lib.testcontainers.version>1.21.3</lib.testcontainers.version>
+        <lib.smallrye-config.version>3.17.0</lib.smallrye-config.version>
+        <lib.swagger.version>2.2.48</lib.swagger.version>
+        <lib.system-stubs.version>2.1.8</lib.system-stubs.version>
+        <lib.testcontainers.version>2.0.5</lib.testcontainers.version>
+        <lib.tink.version>1.21.0</lib.tink.version>
+        <lib.versatile.version>0.18.0</lib.versatile.version>
+        <lib.wiremock.version>3.13.2</lib.wiremock.version>
+        <lib.zstd-jni.version>1.5.7-7</lib.zstd-jni.version>
         <!-- Number of JVM processes to use for unit test parallelization -->
-        <unitTestForkCount>2</unitTestForkCount>
+        <unitTestForkCount>1</unitTestForkCount>
 
         <!-- Log level to use for unit tests -->
         <unitTestLogLevel>WARN</unitTestLogLevel>
+
+        <!-- Default SCM Properties -->
+        <scm.connection>scm:git:git@github.com:DependencyTrack/hyades-apiserver.git</scm.connection>
+        <scm.developer.connection>scm:git:git@github.com:DependencyTrack/hyades-apiserver.git</scm.developer.connection>
+        <scm.url>https://github.com/DependencyTrack/hyades-apiserver.git</scm.url>
     </properties>
 
     <dependencyManagement>
         <dependencies>
+            <dependency>
+                <groupId>org.metaeffekt.core</groupId>
+                <artifactId>ae-security</artifactId>
+                <version>${lib.ae-security.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.tngtech.archunit</groupId>
+                <artifactId>archunit-junit5</artifactId>
+                <version>${lib.archunit.version}</version>
+            </dependency>
+
             <dependency>
                 <groupId>org.assertj</groupId>
                 <artifactId>assertj-core</artifactId>
@@ -132,11 +193,38 @@
             </dependency>
 
             <dependency>
-                <groupId>org.projectnessie.cel</groupId>
-                <artifactId>cel-bom</artifactId>
+                <groupId>org.awaitility</groupId>
+                <artifactId>awaitility</artifactId>
+                <version>${lib.awaitility.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.github.ben-manes.caffeine</groupId>
+                <artifactId>caffeine</artifactId>
+                <version>${lib.caffeine.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>dev.cel</groupId>
+                <artifactId>cel</artifactId>
                 <version>${lib.cel-java.version}</version>
-                <scope>import</scope>
-                <type>pom</type>
+            </dependency>
+            <dependency>
+                <groupId>dev.cel</groupId>
+                <artifactId>extensions</artifactId>
+                <version>${lib.cel-extensions.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-lang3</artifactId>
+                <version>${lib.commons-lang3.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>us.springett</groupId>
+                <artifactId>cpe-parser</artifactId>
+                <version>${lib.cpe-parser.version}</version>
             </dependency>
 
             <dependency>
@@ -158,6 +246,30 @@
                 <groupId>org.datanucleus</groupId>
                 <artifactId>datanucleus-rdbms</artifactId>
                 <version>${lib.datanucleus-rdbms.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.eclipse.angus</groupId>
+                <artifactId>angus-mail</artifactId>
+                <version>${lib.eclipse-angus.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.icegreen</groupId>
+                <artifactId>greenmail-junit5</artifactId>
+                <version>${lib.greenmail.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.zaxxer</groupId>
+                <artifactId>HikariCP</artifactId>
+                <version>${lib.hikaricp.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.httpcomponents.client5</groupId>
+                <artifactId>httpclient5</artifactId>
+                <version>${lib.httpclient5.version}</version>
             </dependency>
 
             <dependency>
@@ -191,6 +303,22 @@
             </dependency>
 
             <dependency>
+                <groupId>io.github.openfeign</groupId>
+                <artifactId>feign-bom</artifactId>
+                <version>${lib.open-feign.version}</version>
+                <scope>import</scope>
+                <type>pom</type>
+            </dependency>
+
+            <dependency>
+                <groupId>io.dropwizard.flywaydb</groupId>
+                <artifactId>flyway-bom</artifactId>
+                <version>${lib.flyway.version}</version>
+                <scope>import</scope>
+                <type>pom</type>
+            </dependency>
+
+            <dependency>
                 <groupId>org.glassfish.jersey</groupId>
                 <artifactId>jersey-bom</artifactId>
                 <version>${lib.jersey.version}</version>
@@ -206,23 +334,29 @@
                 <type>pom</type>
             </dependency>
             <dependency>
-                <groupId>org.eclipse.jetty.ee10</groupId>
-                <artifactId>jetty-ee10-bom</artifactId>
+                <groupId>org.eclipse.jetty.ee11</groupId>
+                <artifactId>jetty-ee11-bom</artifactId>
                 <version>${lib.jetty.version}</version>
                 <scope>import</scope>
                 <type>pom</type>
             </dependency>
 
             <dependency>
-                <groupId>org.jooq</groupId>
-                <artifactId>jooq</artifactId>
-                <version>${lib.jooq.version}</version>
+                <groupId>com.networknt</groupId>
+                <artifactId>json-schema-validator</artifactId>
+                <version>${lib.json-schema-validator.version}</version>
             </dependency>
 
             <dependency>
-                <groupId>junit</groupId>
-                <artifactId>junit</artifactId>
-                <version>${lib.junit4.version}</version>
+                <groupId>net.javacrumbs.json-unit</groupId>
+                <artifactId>json-unit-assertj</artifactId>
+                <version>${lib.json-unit.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.jspecify</groupId>
+                <artifactId>jspecify</artifactId>
+                <version>${lib.jspecify.version}</version>
             </dependency>
 
             <dependency>
@@ -234,9 +368,103 @@
             </dependency>
 
             <dependency>
+                <groupId>org.apache.kafka</groupId>
+                <artifactId>kafka-clients</artifactId>
+                <version>${lib.kafka-clients.version}</version>
+                <exclusions>
+                    <!--
+                        The lz4-java project is archived and has vulnerabilities.
+                        Kafka needs to move to https://github.com/yawkat/lz4-java to resolve them.
+                        Since we don't use lz4, we can safely exclude it until then.
+                    -->
+                    <exclusion>
+                        <groupId>org.lz4</groupId>
+                        <artifactId>lz4-java</artifactId>
+                    </exclusion>
+                </exclusions>
+            </dependency>
+
+            <dependency>
+                <groupId>org.jetbrains.kotlin</groupId>
+                <artifactId>kotlin-bom</artifactId>
+                <version>${lib.kotlin.version}</version>
+                <scope>import</scope>
+                <type>pom</type>
+            </dependency>
+
+            <dependency>
                 <groupId>org.liquibase</groupId>
                 <artifactId>liquibase-core</artifactId>
                 <version>${lib.liquibase.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-classic</artifactId>
+                <version>${lib.logback.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>ch.qos.logback</groupId>
+                <artifactId>logback-core</artifactId>
+                <version>${lib.logback.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.micrometer</groupId>
+                <artifactId>micrometer-bom</artifactId>
+                <version>${lib.micrometer.version}</version>
+                <scope>import</scope>
+                <type>pom</type>
+            </dependency>
+
+            <dependency>
+                <groupId>org.eclipse.microprofile.config</groupId>
+                <artifactId>microprofile-config-api</artifactId>
+                <version>${lib.microprofile-config.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.eclipse.microprofile.health</groupId>
+                <artifactId>microprofile-health-api</artifactId>
+                <version>${lib.microprofile-health.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.minio</groupId>
+                <artifactId>minio</artifactId>
+                <version>${lib.minio.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.mockito</groupId>
+                <artifactId>mockito-bom</artifactId>
+                <version>${lib.mockito.version}</version>
+                <scope>import</scope>
+                <type>pom</type>
+            </dependency>
+
+            <dependency>
+                <groupId>com.squareup.okhttp3</groupId>
+                <artifactId>okhttp-jvm</artifactId>
+                <version>${lib.okhttp.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.github.jeremylong</groupId>
+                <artifactId>open-vulnerability-clients</artifactId>
+                <version>${lib.open-vulnerability-clients.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.github.package-url</groupId>
+                <artifactId>packageurl-java</artifactId>
+                <version>${lib.packageurl.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.pebbletemplates</groupId>
+                <artifactId>pebble</artifactId>
+                <version>${lib.pebble.version}</version>
             </dependency>
 
             <dependency>
@@ -257,14 +485,25 @@
             </dependency>
 
             <dependency>
-                <groupId>org.slf4j</groupId>
-                <artifactId>slf4j-api</artifactId>
-                <version>${lib.slf4j.version}</version>
+                <groupId>io.github.resilience4j</groupId>
+                <artifactId>resilience4j-bom</artifactId>
+                <version>${lib.resilience4j.version}</version>
+                <scope>import</scope>
+                <type>pom</type>
             </dependency>
+
+            <dependency>
+                <groupId>com.adobe.testing</groupId>
+                <artifactId>s3mock-testcontainers</artifactId>
+                <version>${lib.s3mock.version}</version>
+            </dependency>
+
             <dependency>
                 <groupId>org.slf4j</groupId>
-                <artifactId>slf4j-nop</artifactId>
+                <artifactId>slf4j-bom</artifactId>
                 <version>${lib.slf4j.version}</version>
+                <scope>import</scope>
+                <type>pom</type>
             </dependency>
 
             <dependency>
@@ -276,33 +515,65 @@
             </dependency>
 
             <dependency>
+                <groupId>io.swagger.core.v3</groupId>
+                <artifactId>swagger-annotations-jakarta</artifactId>
+                <version>${lib.swagger.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>io.swagger.core.v3</groupId>
+                <artifactId>swagger-jaxrs2-jakarta</artifactId>
+                <version>${lib.swagger.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>uk.org.webcompere</groupId>
+                <artifactId>system-stubs-jupiter</artifactId>
+                <version>${lib.system-stubs.version}</version>
+            </dependency>
+
+            <dependency>
                 <groupId>org.testcontainers</groupId>
                 <artifactId>testcontainers-bom</artifactId>
                 <version>${lib.testcontainers.version}</version>
                 <scope>import</scope>
                 <type>pom</type>
             </dependency>
+
+            <dependency>
+                <groupId>com.google.crypto.tink</groupId>
+                <artifactId>tink</artifactId>
+                <version>${lib.tink.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>io.github.nscuro</groupId>
+                <artifactId>versatile-core</artifactId>
+                <version>${lib.versatile.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.wiremock</groupId>
+                <artifactId>wiremock-standalone</artifactId>
+                <version>${lib.wiremock.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>com.github.luben</groupId>
+                <artifactId>zstd-jni</artifactId>
+                <version>${lib.zstd-jni.version}</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 
     <build>
-        <extensions>
-            <extension>
-                <groupId>org.apache.maven.extensions</groupId>
-                <artifactId>maven-build-cache-extension</artifactId>
-                <version>1.2.0</version>
-            </extension>
-        </extensions>
-
         <pluginManagement>
             <plugins>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-compiler-plugin</artifactId>
-                    <version>3.14.0</version>
+                    <version>3.15.0</version>
                     <configuration>
-                        <source>21</source>
-                        <target>21</target>
+                        <release>21</release>
                         <compilerArgs>
                             <arg>-Xlint:all</arg>
                             <arg>-Xlint:-processing</arg>
@@ -320,7 +591,7 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.5.3</version>
+                    <version>3.5.5</version>
                     <configuration>
                         <argLine>
                             @{argLine}
@@ -330,13 +601,23 @@
                         </argLine>
                         <reuseForks>true</reuseForks>
                         <forkCount>${unitTestForkCount}</forkCount>
+                        <!-- Avoid failing the whole multi-module build when a -Dtest pattern targets
+                             tests that are only present in a subset of modules. This aligns behavior
+                             with the module-level configuration in `apiserver/pom.xml`. -->
+                        <failIfNoSpecifiedTests>false</failIfNoSpecifiedTests>
                     </configuration>
+                </plugin>
+
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-report-plugin</artifactId>
+                    <version>3.5.5</version>
                 </plugin>
 
                 <plugin>
                     <groupId>org.jacoco</groupId>
                     <artifactId>jacoco-maven-plugin</artifactId>
-                    <version>0.8.13</version>
+                    <version>0.8.14</version>
                 </plugin>
 
                 <plugin>
@@ -355,6 +636,54 @@
                         </dependency>
                     </dependencies>
                 </plugin>
+
+                <plugin>
+                    <groupId>org.jsonschema2pojo</groupId>
+                    <artifactId>jsonschema2pojo-maven-plugin</artifactId>
+                    <version>1.3.3</version>
+                    <configuration>
+                        <annotationStyle>jackson2</annotationStyle>
+                        <fileExtensions>
+                            <fileExtension>schema.json</fileExtension>
+                        </fileExtensions>
+                    </configuration>
+                </plugin>
+
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-release-plugin</artifactId>
+                    <version>3.3.1</version>
+                    <configuration>
+                        <tagNameFormat>@{project.version}</tagNameFormat>
+                        <autoVersionSubmodules>true</autoVersionSubmodules>
+                        <pushChanges>true</pushChanges>
+                        <localCheckout>true</localCheckout>
+                        <releaseProfiles>quick</releaseProfiles>
+                        <preparationGoals>clean verify -Pquick</preparationGoals>
+                        <completionGoals>clean</completionGoals>
+                        <signTag>false</signTag>
+                    </configuration>
+                </plugin>
+
+                <plugin>
+                    <groupId>io.github.ascopes</groupId>
+                    <artifactId>protobuf-maven-plugin</artifactId>
+                    <version>5.1.3</version>
+                    <configuration>
+                        <protoc>${lib.protobuf-java.version}</protoc>
+                        <sourceDirectories>
+                            <sourceDirectory>${project.basedir}/src/main/proto</sourceDirectory>
+                        </sourceDirectories>
+                    </configuration>
+                    <executions>
+                        <execution>
+                            <phase>generate-sources</phase>
+                            <goals>
+                                <goal>generate</goal>
+                            </goals>
+                        </execution>
+                    </executions>
+                </plugin>
             </plugins>
         </pluginManagement>
 
@@ -364,7 +693,7 @@
                 <artifactId>maven-checkstyle-plugin</artifactId>
                 <version>3.6.0</version>
                 <configuration>
-                    <configLocation>${project.parentBaseDir}/.checkstyle.xml</configLocation>
+                    <configLocation>${project.parentBaseDir}/support/checkstyle/config.xml</configLocation>
                     <includeTestSourceDirectory>true</includeTestSourceDirectory>
                     <includeResources>false</includeResources>
                     <includeTestResources>false</includeTestResources>
@@ -384,7 +713,7 @@
                     <dependency>
                         <groupId>com.puppycrawl.tools</groupId>
                         <artifactId>checkstyle</artifactId>
-                        <version>11.0.0</version>
+                        <version>13.4.0</version>
                     </dependency>
                 </dependencies>
             </plugin>
@@ -400,6 +729,7 @@
                     </execution>
                 </executions>
             </plugin>
+
         </plugins>
     </build>
 
@@ -427,8 +757,10 @@
                 </property>
             </activation>
             <properties>
-                <unitTestForkCount>1C</unitTestForkCount>
                 <unitTestLogLevel>OFF</unitTestLogLevel>
+                <scm.connection>scm:git:https://github.com/${env.GITHUB_REPOSITORY}.git</scm.connection>
+                <scm.developer.connection>scm:git:https://github.com/${env.GITHUB_REPOSITORY}.git</scm.developer.connection>
+                <scm.url>https://github.com/${env.GITHUB_REPOSITORY}.git</scm.url>
             </properties>
         </profile>
     </profiles>

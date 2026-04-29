@@ -18,7 +18,6 @@
  */
 package org.dependencytrack.persistence;
 
-import alpine.common.logging.Logger;
 import alpine.model.ApiKey;
 import alpine.model.User;
 import alpine.persistence.NotSortableException;
@@ -33,28 +32,31 @@ import org.dependencytrack.model.Policy;
 import org.dependencytrack.model.Project;
 import org.dependencytrack.model.Tag;
 import org.dependencytrack.model.Vulnerability;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import javax.jdo.PersistenceManager;
 import javax.jdo.Query;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 public class TagQueryManager extends QueryManager implements IQueryManager {
 
     private static final Comparator<Tag> TAG_COMPARATOR = Comparator.comparingInt(
             (Tag tag) -> tag.getProjects().size()).reversed();
 
-    private static final Logger LOGGER = Logger.getLogger(ProjectQueryManager.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(ProjectQueryManager.class);
 
     /**
      * Constructs a new QueryManager.
@@ -79,6 +81,7 @@ public class TagQueryManager extends QueryManager implements IQueryManager {
     public record TagListRow(
             String name,
             long projectCount,
+            long collectionProjectCount,
             long policyCount,
             long notificationRuleCount,
             long vulnerabilityCount,
@@ -103,7 +106,11 @@ public class TagQueryManager extends QueryManager implements IQueryManager {
                          INNER JOIN "PROJECT"
                             ON "PROJECT"."ID" = "PROJECTS_TAGS"."PROJECT_ID"
                          WHERE "PROJECTS_TAGS"."TAG_ID" = "TAG"."ID"
-                           AND %s) AS "projectCount"
+                           AND %1$s) AS "projectCount"
+                     , (SELECT COUNT(*)
+                          FROM "PROJECT"
+                         WHERE "COLLECTION_TAG_ID" = "TAG"."ID"
+                           AND %1$s) AS "collectionProjectCount"
                      , (SELECT COUNT(*)
                           FROM "POLICY_TAGS"
                          WHERE "POLICY_TAGS"."TAG_ID" = "TAG"."ID") AS "policyCount"
@@ -128,6 +135,7 @@ public class TagQueryManager extends QueryManager implements IQueryManager {
             sqlQuery += " ORDER BY \"name\" ASC";
         } else if ("name".equals(orderBy)
                 || "projectCount".equals(orderBy)
+                || "collectionProjectCount".equals(orderBy)
                 || "policyCount".equals(orderBy)
                 || "notificationRuleCount".equals(orderBy)
                 || "vulnerabilityCount".equals(orderBy)) {
@@ -154,9 +162,11 @@ public class TagQueryManager extends QueryManager implements IQueryManager {
      * @since 4.12.0
      */
     public record TagDeletionCandidateRow(
+            long id,
             String name,
             long projectCount,
             long accessibleProjectCount,
+            long collectionProjectCount,
             long policyCount,
             long notificationRuleCount,
             long vulnerabilityCount
@@ -184,7 +194,8 @@ public class TagQueryManager extends QueryManager implements IQueryManager {
             }
 
             final Query<?> candidateQuery = pm.newQuery(Query.SQL, /* language=SQL */ """
-                    SELECT "NAME"
+                    SELECT "ID"
+                         , "NAME"
                          , (SELECT COUNT(*)
                               FROM "PROJECTS_TAGS"
                              INNER JOIN "PROJECT"
@@ -195,7 +206,10 @@ public class TagQueryManager extends QueryManager implements IQueryManager {
                              INNER JOIN "PROJECT"
                                 ON "PROJECT"."ID" = "PROJECTS_TAGS"."PROJECT_ID"
                              WHERE "PROJECTS_TAGS"."TAG_ID" = "TAG"."ID"
-                               AND %s) AS "accessibleProjectCount"
+                               AND %1$s) AS "accessibleProjectCount"
+                         , (SELECT COUNT(*)
+                              FROM "PROJECT"
+                             WHERE "COLLECTION_TAG_ID" = "TAG"."ID") AS "collectionProjectCount"
                          , (SELECT COUNT(*)
                               FROM "POLICY_TAGS"
                              INNER JOIN "POLICY"
@@ -212,7 +226,7 @@ public class TagQueryManager extends QueryManager implements IQueryManager {
                                 ON "VULNERABILITY"."ID" = "VULNERABILITIES_TAGS"."VULNERABILITY_ID"
                              WHERE "VULNERABILITIES_TAGS"."TAG_ID" = "TAG"."ID") AS "vulnerabilityCount"
                       FROM "TAG"
-                     WHERE %s
+                     WHERE %2$s
                     """.formatted(projectAclCondition, String.join(" OR ", tagNameFilters)));
             candidateQuery.setNamedParameters(params);
             final List<TagDeletionCandidateRow> candidateRows =
@@ -274,11 +288,16 @@ public class TagQueryManager extends QueryManager implements IQueryManager {
                 }
 
                 final long inaccessibleProjectAssignmentCount =
-                        row.projectCount - row.accessibleProjectCount();
+                        row.projectCount() - row.accessibleProjectCount();
                 if (inaccessibleProjectAssignmentCount > 0) {
                     errorByTagName.put(row.name(), """
                             The tag is assigned to %d project(s) that are not accessible \
                             by the authenticated principal.""".formatted(inaccessibleProjectAssignmentCount));
+                    continue;
+                }
+
+                if (row.collectionProjectCount() > 0) {
+                    errorByTagName.put(row.name(), "The tag is used by %d collection project(s)".formatted(row.collectionProjectCount()));
                     continue;
                 }
 
@@ -309,9 +328,12 @@ public class TagQueryManager extends QueryManager implements IQueryManager {
             }
 
             final Query<Tag> deletionQuery = pm.newQuery(Tag.class);
-            deletionQuery.setFilter(":names.contains(name)");
+            deletionQuery.setFilter(":ids.contains(id)");
             try {
-                deletionQuery.deletePersistentAll(candidateRows.stream().map(TagDeletionCandidateRow::name).toList());
+                deletionQuery.deletePersistentAll(
+                        candidateRows.stream()
+                                .map(TagDeletionCandidateRow::id)
+                                .toList());
             } finally {
                 deletionQuery.closeAll();
             }
@@ -417,6 +439,58 @@ public class TagQueryManager extends QueryManager implements IQueryManager {
     }
 
     /**
+     * @since 4.13.1
+     */
+    public record TaggedCollectionProjectRow(UUID uuid, String name, String version, long totalCount) {
+    }
+
+    /**
+     * @since 4.13.1
+     */
+    @Override
+    public List<TaggedCollectionProjectRow> getTaggedCollectionProjects(final String tagName) {
+        final Map.Entry<String, Map<String, Object>> projectAclConditionAndParams = getProjectAclSqlCondition();
+        final String projectAclCondition = projectAclConditionAndParams.getKey();
+        final Map<String, Object> projectAclConditionParams = projectAclConditionAndParams.getValue();
+
+        // language=SQL
+        var sqlQuery = """
+                SELECT "PROJECT"."UUID" AS "uuid"
+                     , "PROJECT"."NAME" AS "name"
+                     , "PROJECT"."VERSION" AS "version"
+                     , COUNT(*) OVER() AS "totalCount"
+                  FROM "PROJECT"
+                 INNER JOIN "TAG"
+                    ON "TAG"."ID" = "PROJECT"."COLLECTION_TAG_ID"
+                 WHERE "TAG"."NAME" = :tag
+                   AND %s
+                """.formatted(projectAclCondition);
+
+        final var params = new HashMap<>(projectAclConditionParams);
+        params.put("tag", tagName);
+
+        if (filter != null) {
+            sqlQuery += " AND \"PROJECT\".\"NAME\" LIKE :nameFilter";
+            params.put("nameFilter", "%" + filter + "%");
+        }
+
+        if (orderBy == null) {
+            sqlQuery += " ORDER BY \"name\" ASC, \"version\" DESC";
+        } else if ("name".equals(orderBy) || "version".equals(orderBy)) {
+            sqlQuery += " ORDER BY \"%s\" %s, \"ID\" ASC".formatted(orderBy,
+                    orderDirection == OrderDirection.DESCENDING ? "DESC" : "ASC");
+        } else {
+            throw new NotSortableException("TaggedCollectionProject", orderBy, "Field does not exist or is not sortable");
+        }
+
+        sqlQuery += " " + getOffsetLimitSqlClause();
+
+        final Query<?> query = pm.newQuery(Query.SQL, sqlQuery);
+        query.setNamedParameters(params);
+        return executeAndCloseResultList(query, TaggedCollectionProjectRow.class);
+    }
+
+    /**
      * @since 4.12.0
      */
     public record TaggedPolicyRow(UUID uuid, String name, long totalCount) {
@@ -514,25 +588,11 @@ public class TagQueryManager extends QueryManager implements IQueryManager {
 
     @Override
     public PaginatedResult getTagsForPolicy(String policyUuid) {
-
-        LOGGER.debug("Retrieving tags under policy " + policyUuid);
-
-        Policy policy = getObjectByUuid(Policy.class, policyUuid);
-        List<Project> projects = policy.getProjects();
-
-        final Stream<Tag> tags;
-        if (projects != null && !projects.isEmpty()) {
-            tags = projects.stream()
-                    .map(Project::getTags)
-                    .flatMap(Set::stream)
-                    .distinct();
-        } else {
-            tags = pm.newQuery(Tag.class).executeList().stream();
-        }
-
-        List<Tag> tagsToShow = tags.sorted(TAG_COMPARATOR).toList();
-
-        return (new PaginatedResult()).objects(tagsToShow).total(tagsToShow.size());
+        LOGGER.debug("Retrieving tags under policy {}", policyUuid);
+        final var policy = getObjectByUuid(Policy.class, policyUuid);
+        final var tags = Optional.ofNullable(policy.getTags())
+                .orElse(Collections.emptySet()).stream().sorted(TAG_COMPARATOR).toList();
+        return (new PaginatedResult()).objects(tags).total(tags.size());
     }
 
     /**
@@ -611,6 +671,7 @@ public class TagQueryManager extends QueryManager implements IQueryManager {
      * @param names the name(s) of the Tag(s) to create
      * @return the created Tag object(s)
      */
+    @Override
     public Set<Tag> createTags(final Collection<String> names) {
         final Set<Tag> newTags = new HashSet<>();
         for (final String name : names) {

@@ -18,9 +18,12 @@
  */
 package org.dependencytrack.persistence;
 
-import alpine.common.config.BuildInfoConfig;
-import alpine.common.config.BuildInfoConfig.ApplicationBuildInfo;
+import alpine.config.AlpineConfigKeys;
 import alpine.server.auth.PasswordService;
+import jakarta.json.Json;
+import jakarta.json.JsonArray;
+import jakarta.json.JsonObject;
+import jakarta.json.JsonReader;
 import org.apache.commons.lang3.SerializationUtils;
 import org.dependencytrack.auth.Permissions;
 import org.dependencytrack.init.InitTask;
@@ -28,7 +31,6 @@ import org.dependencytrack.init.InitTaskContext;
 import org.dependencytrack.model.ConfigPropertyConstants;
 import org.dependencytrack.model.DefaultRepository;
 import org.dependencytrack.model.License;
-import org.dependencytrack.notification.publisher.DefaultNotificationPublishers;
 import org.dependencytrack.parser.spdx.json.SpdxLicenseDetailParser;
 import org.dependencytrack.persistence.jdbi.ConfigPropertyDao;
 import org.dependencytrack.persistence.jdbi.JdbiFactory;
@@ -38,27 +40,15 @@ import org.jdbi.v3.core.statement.Update;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import jakarta.json.Json;
-import jakarta.json.JsonArray;
-import jakarta.json.JsonObject;
-import jakarta.json.JsonReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URISyntaxException;
-import java.net.URL;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
 
-import static alpine.common.config.ConfigUtil.getConfigMapping;
 import static org.dependencytrack.model.ConfigPropertyConstants.INTERNAL_DEFAULT_OBJECTS_VERSION;
-import static org.dependencytrack.model.ConfigPropertyConstants.NOTIFICATION_TEMPLATE_BASE_DIR;
-import static org.dependencytrack.model.ConfigPropertyConstants.NOTIFICATION_TEMPLATE_DEFAULT_OVERRIDE_ENABLED;
 
 /**
  * @since 5.6.0
@@ -80,41 +70,7 @@ public final class DatabaseSeedingInitTask implements InitTask {
                     Permissions.Constants.PORTFOLIO_MANAGEMENT_DELETE),
             "Automation", List.of(
                     Permissions.Constants.VIEW_PORTFOLIO,
-                    Permissions.Constants.BOM_UPLOAD),
-            "Badge Viewers", List.of(
-                    Permissions.Constants.VIEW_BADGES));
-
-    private static final Map<String, List<String>> DEFAULT_ROLE_PERMISSIONS = Map.of(
-            "Project Admin", List.of(
-                    Permissions.Constants.PORTFOLIO_MANAGEMENT_CREATE,
-                    Permissions.Constants.PORTFOLIO_MANAGEMENT_READ,
-                    Permissions.Constants.PORTFOLIO_MANAGEMENT_UPDATE,
-                    Permissions.Constants.PORTFOLIO_MANAGEMENT_DELETE,
-                    Permissions.Constants.VULNERABILITY_ANALYSIS,
-                    Permissions.Constants.VULNERABILITY_ANALYSIS_CREATE,
-                    Permissions.Constants.VULNERABILITY_ANALYSIS_READ,
-                    Permissions.Constants.VULNERABILITY_ANALYSIS_UPDATE,
-                    Permissions.Constants.POLICY_MANAGEMENT,
-                    Permissions.Constants.POLICY_MANAGEMENT_CREATE,
-                    Permissions.Constants.POLICY_MANAGEMENT_READ,
-                    Permissions.Constants.POLICY_MANAGEMENT_UPDATE,
-                    Permissions.Constants.POLICY_MANAGEMENT_DELETE),
-            "Project Auditor", List.of(
-                    Permissions.Constants.VIEW_PORTFOLIO,
-                    Permissions.Constants.VIEW_VULNERABILITY,
-                    Permissions.Constants.VIEW_POLICY_VIOLATION,
-                    Permissions.Constants.VULNERABILITY_ANALYSIS_READ),
-            "Project Editor", List.of(
-                    Permissions.Constants.BOM_UPLOAD,
-                    Permissions.Constants.VIEW_PORTFOLIO,
-                    Permissions.Constants.PORTFOLIO_MANAGEMENT_READ,
-                    Permissions.Constants.VIEW_VULNERABILITY,
-                    Permissions.Constants.VULNERABILITY_ANALYSIS_READ,
-                    Permissions.Constants.PROJECT_CREATION_UPLOAD),
-            "Project Viewer", List.of(
-                    Permissions.Constants.VIEW_PORTFOLIO,
-                    Permissions.Constants.VIEW_VULNERABILITY,
-                    Permissions.Constants.VIEW_BADGES));
+                    Permissions.Constants.BOM_UPLOAD));
 
     @Override
     public int priority() {
@@ -133,9 +89,8 @@ public final class DatabaseSeedingInitTask implements InitTask {
         jdbi.useTransaction(handle -> {
             final var configPropertyDao = handle.attach(ConfigPropertyDao.class);
 
-            final ApplicationBuildInfo appBuildInfo =
-                    getConfigMapping(ctx.config(), BuildInfoConfig.class).application();
-            final String appBuildUuid = appBuildInfo.uuid();
+            final String appBuildUuid = ctx.config().getValue(AlpineConfigKeys.BUILD_INFO_APPLICATION_UUID, String.class);
+            final String appBuildTimestamp = ctx.config().getValue(AlpineConfigKeys.BUILD_INFO_APPLICATION_TIMESTAMP, String.class);
             final String defaultObjectsVersion = configPropertyDao
                     .getOptionalValue(INTERNAL_DEFAULT_OBJECTS_VERSION)
                     .orElse(null);
@@ -143,20 +98,18 @@ public final class DatabaseSeedingInitTask implements InitTask {
                 LOGGER.info(
                         "Default objects already populated for build {} (timestamp: {}); Skipping",
                         appBuildUuid,
-                        appBuildInfo.timestamp());
+                        appBuildTimestamp);
                 return;
             }
 
             seedDefaultConfigProperties(handle);
             seedDefaultPermissions(handle);
             seedDefaultLicenses(handle);
-            seedDefaultNotificationPublishers(handle);
             seedDefaultRepositories(handle);
 
             final boolean isFirstExecution = defaultObjectsVersion == null;
             if (isFirstExecution) {
                 seedDefaultTeams(handle);
-                seedDefaultRoles(handle);
                 seedDefaultUsers(handle);
                 seedDefaultLicenseGroups(handle);
             }
@@ -235,45 +188,6 @@ public final class DatabaseSeedingInitTask implements InitTask {
 
         update
                 .bindArray("teamNames", String.class, teamNames)
-                .bindArray("permissionNames", String.class, permissionNames)
-                .execute();
-    }
-
-    public static void seedDefaultRoles(final Handle jdbiHandle) {
-        final Update update = jdbiHandle.createUpdate("""
-                WITH cte_role_permission AS (
-                  SELECT *
-                    FROM UNNEST(:roleNames, :permissionNames) AS t(role_name, permission_name)
-                ),
-                cte_created_role AS (
-                  INSERT INTO "ROLE" ("NAME", "UUID")
-                  SELECT DISTINCT ON (role_name)
-                         role_name
-                       , GEN_RANDOM_UUID()
-                    FROM cte_role_permission
-                  RETURNING "ID" AS id
-                          , "NAME" AS name
-                )
-                INSERT INTO "ROLES_PERMISSIONS" ("ROLE_ID", "PERMISSION_ID")
-                SELECT cte_created_role.id
-                     , (SELECT "ID" FROM "PERMISSION" WHERE "NAME" = cte_role_permission.permission_name)
-                  FROM cte_role_permission
-                 INNER JOIN cte_created_role
-                    ON cte_created_role.name = cte_role_permission.role_name
-                """);
-
-        final var roleNames = new ArrayList<String>();
-        final var permissionNames = new ArrayList<String>();
-
-        for (final Map.Entry<String, List<String>> entry : DEFAULT_ROLE_PERMISSIONS.entrySet()) {
-            for (final String permissionName : entry.getValue()) {
-                roleNames.add(entry.getKey());
-                permissionNames.add(permissionName);
-            }
-        }
-
-        update
-                .bindArray("roleNames", String.class, roleNames)
                 .bindArray("permissionNames", String.class, permissionNames)
                 .execute();
     }
@@ -415,74 +329,6 @@ public final class DatabaseSeedingInitTask implements InitTask {
                 .bindArray("groupRiskWeights", Integer.class, groupRiskWeights)
                 .bindArray("licenseIds", String.class, licenseIds)
                 .execute();
-    }
-
-    public static void seedDefaultNotificationPublishers(final Handle jdbiHandle) {
-        final PreparedBatch preparedBatch = jdbiHandle.prepareBatch("""
-                INSERT INTO "NOTIFICATIONPUBLISHER" (
-                  "NAME", "PUBLISHER_CLASS", "DEFAULT_PUBLISHER", "DESCRIPTION"
-                , "TEMPLATE", "TEMPLATE_MIME_TYPE", "UUID")
-                VALUES (
-                  :publisherName, :publisherClass, TRUE, :publisherDescription
-                , :templateContent, :templateMimeType, GEN_RANDOM_UUID())
-                ON CONFLICT ("NAME") DO UPDATE
-                SET "PUBLISHER_CLASS" = EXCLUDED."PUBLISHER_CLASS"
-                  , "DESCRIPTION" = EXCLUDED."DESCRIPTION"
-                  , "TEMPLATE" = EXCLUDED."TEMPLATE"
-                  , "TEMPLATE_MIME_TYPE" =  EXCLUDED."TEMPLATE_MIME_TYPE"
-                -- Only update when at least one relevant field has changed.
-                WHERE "NOTIFICATIONPUBLISHER"."PUBLISHER_CLASS" IS DISTINCT FROM EXCLUDED."PUBLISHER_CLASS"
-                   OR "NOTIFICATIONPUBLISHER"."DESCRIPTION" IS DISTINCT FROM EXCLUDED."DESCRIPTION"
-                   OR "NOTIFICATIONPUBLISHER"."TEMPLATE" IS DISTINCT FROM EXCLUDED."TEMPLATE"
-                   OR "NOTIFICATIONPUBLISHER"."TEMPLATE_MIME_TYPE" IS DISTINCT FROM EXCLUDED."TEMPLATE_MIME_TYPE"
-                """);
-
-        final var configPropertyDao = jdbiHandle.attach(ConfigPropertyDao.class);
-        final var templateOverrideEnabled = configPropertyDao.getOptionalValue(
-                NOTIFICATION_TEMPLATE_DEFAULT_OVERRIDE_ENABLED, Boolean.class).orElse(false);
-        final var templateOverrideBaseDir = configPropertyDao.getOptionalValue(
-                NOTIFICATION_TEMPLATE_BASE_DIR).orElse(null);
-        if (templateOverrideEnabled && templateOverrideBaseDir == null) {
-            throw new IllegalStateException("%s is enabled but %s is not configured".formatted(
-                    NOTIFICATION_TEMPLATE_DEFAULT_OVERRIDE_ENABLED.getPropertyName(),
-                    NOTIFICATION_TEMPLATE_BASE_DIR.getPropertyName()));
-        }
-
-        for (final DefaultNotificationPublishers publisher : DefaultNotificationPublishers.values()) {
-            final URL templateFileUrl = DatabaseSeedingInitTask.class.getResource(publisher.getPublisherTemplateFile());
-            if (templateFileUrl == null) {
-                throw new IllegalStateException("Template file %s of default publisher %s does not exist".formatted(
-                        publisher.getPublisherTemplateFile(), publisher.getPublisherName()));
-            }
-
-            Path templateFilePath;
-            try {
-                templateFilePath = Paths.get(templateFileUrl.toURI());
-            } catch (URISyntaxException e) {
-                throw new IllegalStateException("Failed to construct path for template file: " + templateFileUrl, e);
-            }
-
-            if (templateOverrideEnabled) {
-                final Path customTemplateFilePath = Paths.get(templateOverrideBaseDir, publisher.getPublisherTemplateFile());
-                if (Files.exists(customTemplateFilePath)) {
-                    templateFilePath = customTemplateFilePath;
-                }
-            }
-
-            final String templateContent;
-            try {
-                templateContent = Files.readString(templateFilePath);
-            } catch (IOException e) {
-                throw new IllegalStateException("Failed to read template file: " + templateFilePath, e);
-            }
-
-            preparedBatch.bindBean(publisher);
-            preparedBatch.bind("templateContent", templateContent);
-            preparedBatch.add();
-        }
-
-        final int publishersCreatedOrUpdated = Arrays.stream(preparedBatch.execute()).sum();
-        LOGGER.debug("Created or updated {} publishers", publishersCreatedOrUpdated);
     }
 
     public static void seedDefaultRepositories(final Handle jdbiHandle) {

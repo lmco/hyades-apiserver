@@ -20,23 +20,26 @@ package org.dependencytrack.model;
 
 import alpine.common.validation.RegexSequence;
 import alpine.model.Team;
-import alpine.notification.NotificationLevel;
 import alpine.server.json.TrimmedStringDeserializer;
+import com.asahaf.javacron.Schedule;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
-import org.apache.commons.collections4.CollectionUtils;
-import org.dependencytrack.notification.NotificationGroup;
-import org.dependencytrack.notification.NotificationScope;
-
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
+import org.dependencytrack.model.validation.ValidCronExpression;
+import org.dependencytrack.notification.NotificationGroup;
+import org.dependencytrack.notification.NotificationLevel;
+import org.dependencytrack.notification.NotificationScope;
+
 import javax.jdo.annotations.Column;
 import javax.jdo.annotations.Element;
 import javax.jdo.annotations.Extension;
+import javax.jdo.annotations.Extensions;
 import javax.jdo.annotations.ForeignKey;
 import javax.jdo.annotations.ForeignKeyAction;
 import javax.jdo.annotations.IdGeneratorStrategy;
@@ -47,12 +50,14 @@ import javax.jdo.annotations.Persistent;
 import javax.jdo.annotations.PrimaryKey;
 import javax.jdo.annotations.Unique;
 import java.io.Serializable;
-import java.util.ArrayList;
-import java.util.Collections;
+import java.util.Date;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.UUID;
+import java.util.stream.Collectors;
+
+import static java.util.Objects.requireNonNull;
 
 /**
  * Defines a Model class for notification configurations.
@@ -110,6 +115,10 @@ public class NotificationRule implements Serializable {
 
     @Persistent(defaultFetchGroup = "true")
     @Column(name = "NOTIFICATION_LEVEL", jdbcType = "VARCHAR")
+    @Extensions(value = {
+            @Extension(vendorName = "datanucleus", key = "insert-function", value = "CAST(? AS notification_level)"),
+            @Extension(vendorName = "datanucleus", key = "update-function", value = "CAST(? AS notification_level)")
+    })
     private NotificationLevel notificationLevel;
 
     @Persistent(table = "NOTIFICATIONRULE_PROJECTS", defaultFetchGroup = "true")
@@ -128,9 +137,9 @@ public class NotificationRule implements Serializable {
     @Element(column = "TEAM_ID", foreignKey = "NOTIFICATIONRULE_TEAMS_TEAM_FK", deleteAction = ForeignKeyAction.CASCADE)
     private Set<Team> teams;
 
-    @Persistent
-    @Column(name = "NOTIFY_ON", length = 1024)
-    private String notifyOn;
+    @Persistent(defaultFetchGroup = "true")
+    @Column(name = "NOTIFY_ON", jdbcType = "ARRAY", sqlType = "TEXT ARRAY")
+    private Set<String> notifyOn = new LinkedHashSet<>();
 
     @Persistent
     @Column(name = "MESSAGE", length = 1024)
@@ -146,8 +155,64 @@ public class NotificationRule implements Serializable {
 
     @Persistent(defaultFetchGroup = "true")
     @Column(name = "PUBLISHER_CONFIG", jdbcType = "CLOB")
+    @Extensions(value = {
+            @Extension(vendorName = "datanucleus", key = "insert-function", value = "CAST(? AS JSONB)"),
+            @Extension(vendorName = "datanucleus", key = "update-function", value = "CAST(? AS JSONB)")
+    })
     @JsonDeserialize(using = TrimmedStringDeserializer.class)
     private String publisherConfig;
+
+    /**
+     * @since 4.13.0
+     */
+    @Persistent
+    @Column(name = "TRIGGER_TYPE", allowsNull = "false", defaultValue = "EVENT")
+    @Schema(accessMode = Schema.AccessMode.READ_ONLY, requiredMode = Schema.RequiredMode.REQUIRED)
+    private NotificationTriggerType triggerType;
+
+    /**
+     * @since 4.13.0
+     */
+    @Persistent
+    @Column(name = "SCHEDULE_CRON")
+    @Schema(description = """
+            Schedule of this rule as cron expression. \
+            Must not be set for rules with trigger type EVENT.""")
+    @ValidCronExpression
+    @JsonDeserialize(using = TrimmedStringDeserializer.class)
+    private String scheduleCron;
+
+    /**
+     * @since 4.13.0
+     */
+    @Persistent
+    @Column(name = "SCHEDULE_LAST_TRIGGERED_AT")
+    @Schema(type = "integer", format = "int64", accessMode = Schema.AccessMode.READ_ONLY, description = "When the schedule last triggered, as UNIX epoch timestamp in milliseconds")
+    private Date scheduleLastTriggeredAt;
+
+    /**
+     * @since 4.13.0
+     */
+    @Persistent
+    @Column(name = "SCHEDULE_NEXT_TRIGGER_AT")
+    @Schema(type = "integer", format = "int64", accessMode = Schema.AccessMode.READ_ONLY, description = "When the schedule triggers next, as UNIX epoch timestamp in milliseconds")
+    private Date scheduleNextTriggerAt;
+
+    /**
+     * @since 4.13.0
+     */
+    @Persistent
+    @Column(name = "SCHEDULE_SKIP_UNCHANGED")
+    @Schema(description = """
+            Whether to skip emitting a scheduled notification if it doesn't \
+            contain any changes since its last emission. \
+            Must not be set for rules with trigger type EVENT.""")
+    private Boolean scheduleSkipUnchanged;
+
+    @Persistent
+    @Column(name = "FILTER_EXPRESSION", allowsNull = "true")
+    @JsonDeserialize(using = TrimmedStringDeserializer.class)
+    private String filterExpression;
 
     @Persistent(defaultFetchGroup = "true", customValueStrategy = "uuid")
     @Unique(name = "NOTIFICATIONRULE_UUID_IDX")
@@ -247,31 +312,23 @@ public class NotificationRule implements Serializable {
     }
 
     public Set<NotificationGroup> getNotifyOn() {
-        Set<NotificationGroup> result = new TreeSet<>();
-        if (notifyOn != null) {
-            String[] groups = notifyOn.split(",");
-            for (String s: groups) {
-                result.add(NotificationGroup.valueOf(s.trim()));
-            }
+        if (notifyOn == null) {
+            return null;
         }
-        return result;
+
+        return notifyOn.stream()
+                .map(NotificationGroup::valueOf)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     public void setNotifyOn(Set<NotificationGroup> groups) {
-        if (CollectionUtils.isEmpty(groups)) {
+        if (groups == null) {
             this.notifyOn = null;
-            return;
+        } else {
+            this.notifyOn = groups.stream()
+                    .map(Enum::name)
+                    .collect(Collectors.toCollection(LinkedHashSet::new));
         }
-        StringBuilder sb = new StringBuilder();
-        List<NotificationGroup> list = new ArrayList<>(groups);
-        Collections.sort(list);
-        for (int i=0; i<list.size(); i++) {
-            sb.append(list.get(i));
-            if (i+1 < list.size()) {
-                sb.append(",");
-            }
-        }
-        this.notifyOn = sb.toString();
     }
 
     public NotificationPublisher getPublisher() {
@@ -290,6 +347,14 @@ public class NotificationRule implements Serializable {
         this.publisherConfig = publisherConfig;
     }
 
+    public String getFilterExpression() {
+        return filterExpression;
+    }
+
+    public void setFilterExpression(String filterExpression) {
+        this.filterExpression = filterExpression;
+    }
+
     @NotNull
     public UUID getUuid() {
         return uuid;
@@ -298,4 +363,85 @@ public class NotificationRule implements Serializable {
     public void setUuid(@NotNull UUID uuid) {
         this.uuid = uuid;
     }
+
+    public NotificationTriggerType getTriggerType() {
+        return triggerType;
+    }
+
+    public void setTriggerType(NotificationTriggerType triggerType) {
+        if (this.triggerType != null && this.triggerType != triggerType) {
+            throw new IllegalStateException("Trigger type can not be changed");
+        }
+        this.triggerType = triggerType;
+    }
+
+    public String getScheduleCron() {
+        return scheduleCron;
+    }
+
+    public void setScheduleCron(String scheduleCron) {
+        requireTriggerType(
+                NotificationTriggerType.SCHEDULE,
+                "scheduleCron can not be set for rule with trigger type " + this.triggerType);
+        this.scheduleCron = scheduleCron;
+    }
+
+    public Date getScheduleLastTriggeredAt() {
+        return scheduleLastTriggeredAt;
+    }
+
+    public void setScheduleLastTriggeredAt(Date scheduleLastTriggeredAt) {
+        requireTriggerType(
+                NotificationTriggerType.SCHEDULE,
+                "scheduleLastTriggeredAt can not be set for rule with trigger type " + this.triggerType);
+        this.scheduleLastTriggeredAt = scheduleLastTriggeredAt;
+    }
+
+    public Date getScheduleNextTriggerAt() {
+        return scheduleNextTriggerAt;
+    }
+
+    public void setScheduleNextTriggerAt(Date scheduleNextTriggerAt) {
+        requireTriggerType(
+                NotificationTriggerType.SCHEDULE,
+                "scheduleNextTriggerAt can not be set for rule with trigger type " + this.triggerType);
+        this.scheduleNextTriggerAt = scheduleNextTriggerAt;
+    }
+
+    public void updateScheduleNextTriggerAt() {
+        requireTriggerType(
+                NotificationTriggerType.SCHEDULE,
+                "scheduleNextTriggerAt can not be set for rule with trigger type " + this.triggerType);
+        requireNonNull(this.scheduleCron, "scheduleCron must not be null");
+        requireNonNull(this.scheduleLastTriggeredAt, "scheduleLastTriggeredAt must not be null");
+
+        try {
+            final var schedule = Schedule.create(scheduleCron);
+            final var now = new Date();
+            final Date baseDate = scheduleLastTriggeredAt != null && scheduleLastTriggeredAt.after(now)
+                    ? scheduleLastTriggeredAt
+                    : now;
+            this.scheduleNextTriggerAt = schedule.next(baseDate);
+        } catch (com.asahaf.javacron.InvalidExpressionException e) {
+            throw new IllegalArgumentException("Invalid cron expression: " + scheduleCron, e);
+        }
+    }
+
+    public Boolean isScheduleSkipUnchanged() {
+        return scheduleSkipUnchanged;
+    }
+
+    public void setScheduleSkipUnchanged(Boolean scheduleSkipUnchanged) {
+        requireTriggerType(
+                NotificationTriggerType.SCHEDULE,
+                "scheduleSkipUnchanged can not be set for rule with trigger type " + this.triggerType);
+        this.scheduleSkipUnchanged = scheduleSkipUnchanged;
+    }
+
+    private void requireTriggerType(final NotificationTriggerType triggerType, final String message) {
+        if (this.triggerType != triggerType) {
+            throw new IllegalStateException(message);
+        }
+    }
+
 }

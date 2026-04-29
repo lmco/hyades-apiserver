@@ -18,18 +18,13 @@
  */
 package org.dependencytrack.persistence.jdbi;
 
-import alpine.notification.NotificationLevel;
 import org.dependencytrack.PersistenceCapableTest;
-import org.dependencytrack.model.Analysis;
 import org.dependencytrack.model.AnalysisJustification;
 import org.dependencytrack.model.AnalysisResponse;
 import org.dependencytrack.model.AnalysisState;
-import org.dependencytrack.model.AnalyzerIdentity;
 import org.dependencytrack.model.Bom;
 import org.dependencytrack.model.Component;
 import org.dependencytrack.model.DependencyMetrics;
-import org.dependencytrack.model.IntegrityAnalysis;
-import org.dependencytrack.model.IntegrityMatchStatus;
 import org.dependencytrack.model.NotificationPublisher;
 import org.dependencytrack.model.NotificationRule;
 import org.dependencytrack.model.OrganizationalContact;
@@ -41,15 +36,17 @@ import org.dependencytrack.model.ProjectMetadata;
 import org.dependencytrack.model.ProjectMetrics;
 import org.dependencytrack.model.ServiceComponent;
 import org.dependencytrack.model.Vex;
-import org.dependencytrack.model.ViolationAnalysis;
 import org.dependencytrack.model.ViolationAnalysisState;
 import org.dependencytrack.model.Vulnerability;
+import org.dependencytrack.notification.NotificationLevel;
 import org.dependencytrack.notification.NotificationScope;
+import org.dependencytrack.persistence.command.MakeAnalysisCommand;
+import org.dependencytrack.persistence.command.MakeViolationAnalysisCommand;
 import org.dependencytrack.util.DateUtil;
 import org.jdbi.v3.core.Handle;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 
 import javax.jdo.JDOObjectNotFoundException;
 import java.time.Instant;
@@ -63,21 +60,20 @@ import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.assertj.core.api.Assertions.assertThatNoException;
 import static org.dependencytrack.persistence.jdbi.JdbiFactory.openJdbiHandle;
 import static org.dependencytrack.persistence.jdbi.JdbiFactory.useJdbiHandle;
-import static org.dependencytrack.persistence.jdbi.JdbiFactory.withJdbiHandle;
 
 public class ProjectDaoTest extends PersistenceCapableTest {
 
     private Handle jdbiHandle;
     private ProjectDao projectDao;
 
-    @Before
+    @BeforeEach
     public void before() throws Exception {
         super.before();
         jdbiHandle = openJdbiHandle();
         projectDao = jdbiHandle.attach(ProjectDao.class);
     }
 
-    @After
+    @AfterEach
     public void after() {
         if (jdbiHandle != null) {
             jdbiHandle.close();
@@ -110,14 +106,14 @@ public class ProjectDaoTest extends PersistenceCapableTest {
         vuln.setVulnId("INT-123");
         vuln.setSource(Vulnerability.Source.INTERNAL);
         qm.persist(vuln);
-        qm.addVulnerability(vuln, component, AnalyzerIdentity.INTERNAL_ANALYZER);
-        withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysis(project.getId(), component.getId(), vuln.getId(), AnalysisState.NOT_AFFECTED,
-                        AnalysisJustification.CODE_NOT_REACHABLE, AnalysisResponse.WORKAROUND_AVAILABLE,
-                        "analysisDetails", false));
-        final Analysis analysis = qm.getAnalysis(component, vuln);
-        withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysisComment(analysis.getId(), "someComment", "someCommenter"));
+        qm.addVulnerability(vuln, component, "internal");
+        qm.makeAnalysis(
+                new MakeAnalysisCommand(component, vuln)
+                        .withState(AnalysisState.NOT_AFFECTED)
+                        .withJustification(AnalysisJustification.CODE_NOT_REACHABLE)
+                        .withResponse(AnalysisResponse.WORKAROUND_AVAILABLE)
+                        .withDetails("analysisDetails")
+                        .withComment("someComment"));
 
         // Create a child component to validate that deletion is indeed recursive.
         final var componentChild = new Component();
@@ -146,20 +142,11 @@ public class ProjectDaoTest extends PersistenceCapableTest {
         policyViolation.setType(PolicyViolation.Type.OPERATIONAL);
         policyViolation.setTimestamp(new Date());
         qm.persist(policyViolation);
-        final ViolationAnalysis violationAnalysis = qm.makeViolationAnalysis(componentChild, policyViolation,
-                ViolationAnalysisState.REJECTED, false);
-        qm.makeViolationAnalysisComment(violationAnalysis, "someComment", "someCommenter");
-
-        // Assign am integrity analysis to componentChild
-        final var integrityAnalysis = new IntegrityAnalysis();
-        integrityAnalysis.setComponent(componentChild);
-        integrityAnalysis.setMd5HashMatchStatus(IntegrityMatchStatus.HASH_MATCH_PASSED);
-        integrityAnalysis.setSha1HashMatchStatus(IntegrityMatchStatus.HASH_MATCH_PASSED);
-        integrityAnalysis.setSha256HashMatchStatus(IntegrityMatchStatus.HASH_MATCH_PASSED);
-        integrityAnalysis.setSha512HashMatchStatus(IntegrityMatchStatus.HASH_MATCH_PASSED);
-        integrityAnalysis.setIntegrityCheckStatus(IntegrityMatchStatus.HASH_MATCH_PASSED);
-        integrityAnalysis.setUpdatedAt(new Date());
-        qm.persist(integrityAnalysis);
+        qm.makeViolationAnalysis(
+                new MakeViolationAnalysisCommand(componentChild, policyViolation)
+                        .withState(ViolationAnalysisState.REJECTED)
+                        .withCommenter("someCommenter")
+                        .withComment("someComment"));
 
         // Create metrics for project and component.
         useJdbiHandle(handle ->  {
@@ -197,10 +184,17 @@ public class ProjectDaoTest extends PersistenceCapableTest {
         qm.persist(projectChildComponent);
 
         // Create a VEX for projectChild.
-        final Vex vex = qm.createVex(projectChild, new Date(), Vex.Format.CYCLONEDX, "1.3", 1, "serialNumber");
+        final var vex = new Vex();
+        vex.setProject(projectChild);
+        vex.setImported(new Date());
+        vex.setVexFormat(Vex.Format.CYCLONEDX);
+        vex.setSpecVersion("1.3");
+        vex.setVexVersion(1);
+        vex.setSerialNumber("serialNumber");
+        qm.persist(vex);
 
         // Create a notification rule and associate projectChild with it.
-        final NotificationPublisher notificationPublisher = qm.createNotificationPublisher("name", "description", "publisherClass", "templateContent", "templateMimeType", true);
+        final NotificationPublisher notificationPublisher = qm.createNotificationPublisher("name", "description", "extensionName", "templateContent", "templateMimeType", true);
         final NotificationRule notificationRule = qm.createNotificationRule("name", NotificationScope.PORTFOLIO, NotificationLevel.WARNING, notificationPublisher);
         notificationRule.getProjects().add(projectChild);
         qm.persist(notificationRule);
@@ -219,7 +213,6 @@ public class ProjectDaoTest extends PersistenceCapableTest {
         assertThatExceptionOfType(JDOObjectNotFoundException.class).isThrownBy(() -> qm.getObjectById(Component.class, componentChild.getId()));
         assertThatExceptionOfType(JDOObjectNotFoundException.class).isThrownBy(() -> qm.getObjectById(Component.class, projectChildComponent.getId()));
         assertThatExceptionOfType(JDOObjectNotFoundException.class).isThrownBy(() -> qm.getObjectById(ProjectMetadata.class, projectMetadata.getId()));
-        assertThatExceptionOfType(JDOObjectNotFoundException.class).isThrownBy(() -> qm.getObjectById(IntegrityAnalysis.class, integrityAnalysis.getId()));
         assertThatExceptionOfType(JDOObjectNotFoundException.class).isThrownBy(() -> qm.getObjectById(Bom.class, bom.getId()));
         assertThatExceptionOfType(JDOObjectNotFoundException.class).isThrownBy(() -> qm.getObjectById(Vex.class, vex.getId()));
         assertThatExceptionOfType(JDOObjectNotFoundException.class).isThrownBy(() -> qm.getObjectById(ServiceComponent.class, serviceComponent.getId()));

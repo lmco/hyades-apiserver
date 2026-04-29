@@ -45,14 +45,25 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # tag=v5.0.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # tag=v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up JDK
-        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # tag=v5.0.0
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # tag=v5.2.0
         with:
           distribution: 'temurin'
-          java-version: '21'
+          java-version: '25'
           cache: 'maven'
+
+      - name: Restore Maven build cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # tag=v5.0.5
+        with:
+          path: ~/.m2/build-cache
+          key: maven-build-cache-build-${{ hashFiles('.mvn/maven-build-cache-config.xml') }}-${{ github.run_id }}
+          restore-keys: |
+            maven-build-cache-build-${{ hashFiles('.mvn/maven-build-cache-config.xml') }}-
+            maven-build-cache-build-
 
       - name: Setup CycloneDX CLI
         run: |
@@ -64,52 +75,67 @@ jobs:
 
       - name: Build with Maven
         run: |-
-          mvn -B -Pquick -Dservices.bom.merge.skip=false package
+          mvn -B -Pquick,dist -Dservices.bom.merge.skip=false package
 
-      - name: Upload Artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # tag=v4.6.2
+      - name: Upload Distribution Archive
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # tag=v7.0.1
         with:
-          name: assembled-wars
+          name: assembled-dist
           path: |-
-            apiserver/target/*.jar
+            apiserver/target/dependency-track-apiserver-dist.tar.gz
+
+      - name: Upload BOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # tag=v7.0.1
+        with:
+          name: bom
+          path: |-
             apiserver/target/bom.json
 
+      - name: Extract OpenAPI Specs
+        run: |-
+          mkdir -p openapi-spec/v1 openapi-spec/v2
+          unzip -p api/target/api-*.jar org/dependencytrack/api/v2/openapi.yaml > openapi-spec/v2/openapi.yaml
+          unzip -p apiserver/target/dependency-track-apiserver.jar org/dependencytrack/api/v1/openapi.yaml > openapi-spec/v1/openapi.yaml
+
       - name: Upload OpenAPI Spec
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # tag=v4.6.2
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # tag=v7.0.1
         with:
           name: openapi-spec
-          path: |-
-            api/target/classes/**/openapi.yaml
+          path: openapi-spec/
 
   build-container:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       packages: write # Required to push images to ghcr.io
-      security-events: write # Required to upload trivy's SARIF output
     needs:
       - build-java
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # tag=v5.0.0
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # tag=v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Download Artifacts
-        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # tag=v5.0.0
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # tag=v8.0.1
         with:
-          name: assembled-wars
+          name: assembled-dist
           path: apiserver/target
 
+      - name: Extract Distribution Archive
+        run: tar xzf apiserver/target/dependency-track-apiserver-dist.tar.gz -C apiserver/target
+
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392 # tag=v3.6.0
+        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # tag=v4.0.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # tag=v3.11.1
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # tag=v4.0.0
         id: buildx
         with:
           install: true
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1 # tag=v3.5.0
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # tag=v4.1.0
         if: ${{ inputs.publish-container }}
         with:
           registry: ghcr.io
@@ -118,23 +144,25 @@ jobs:
 
       - name: Set Container Tags
         id: tags
+        env:
+          REF_NAME: ${{ inputs.ref-name }}
+          APP_VERSION: ${{ inputs.app-version }}
         run: |-
           IMAGE_NAME="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/hyades-apiserver"
-          REF_NAME="${{ inputs.ref-name }}"
           TAGS=""
-          
+
           if [[ $REF_NAME == feature-* ]]; then
             TAGS="${IMAGE_NAME}:${REF_NAME,,}"
           else
-            TAGS="${IMAGE_NAME}:${{ inputs.app-version }}"
-            if [[ "${{ inputs.app-version }}" != "snapshot" ]]; then
+            TAGS="${IMAGE_NAME}:${APP_VERSION}"
+            if [[ "${APP_VERSION}" != "snapshot" && "${APP_VERSION}" != *-* ]]; then
               TAGS="${TAGS},${IMAGE_NAME}:latest"
             fi
           fi
           echo "tags=${TAGS}" >> $GITHUB_OUTPUT
 
       - name: Build multi-arch Container Image
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # tag=v6.18.0
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # tag=v7.1.0
         with:
           tags: ${{ steps.tags.outputs.tags }}
           build-args: |-
@@ -144,19 +172,3 @@ jobs:
           push: ${{ inputs.publish-container }}
           context: ./apiserver
           file: ./apiserver/src/main/docker/Dockerfile
-
-      - name: Run Trivy Vulnerability Scanner
-        if: ${{ inputs.publish-container }}
-        uses: aquasecurity/trivy-action@f9424c10c36e288d5fa79bd3dfd1aeb2d6eae808 # tag=0.33.0
-        with:
-          image-ref: ghcr.io/dependencytrack/hyades-apiserver:${{ inputs.app-version }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          ignore-unfixed: true
-          vuln-type: 'os'
-
-      - name: Upload Trivy Scan Results to GitHub Security Tab
-        if: ${{ inputs.publish-container }}
-        uses: github/codeql-action/upload-sarif@2d92b76c45b91eb80fc44c74ce3fce0ee94e8f9d # tag=v3.29.5
-        with:
-          sarif_file: 'trivy-results.sarif'

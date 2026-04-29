@@ -18,33 +18,31 @@
  */
 package org.dependencytrack;
 
-import alpine.Config;
+import alpine.event.framework.EventService;
+import alpine.event.framework.SingleThreadedEventService;
 import alpine.model.Permission;
 import alpine.model.Team;
 import alpine.server.auth.PasswordService;
-import alpine.server.persistence.PersistenceManagerFactory;
-import org.apache.kafka.clients.producer.MockProducer;
-import org.dependencytrack.auth.Permissions;
-import org.dependencytrack.event.kafka.KafkaProducerInitializer;
-import org.dependencytrack.model.ConfigPropertyConstants;
-import org.dependencytrack.persistence.QueryManager;
-import org.dependencytrack.plugin.PluginManagerTestUtil;
-import org.junit.After;
-import org.junit.AfterClass;
-import org.junit.Before;
-import org.junit.BeforeClass;
-
 import jakarta.json.Json;
 import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
 import jakarta.json.JsonReader;
 import jakarta.ws.rs.core.Response;
+import org.dependencytrack.auth.Permissions;
+import org.dependencytrack.model.ConfigPropertyConstants;
+import org.dependencytrack.persistence.QueryManager;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.BeforeEach;
+
 import java.io.StringReader;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.TimeoutException;
 
-import static org.dependencytrack.PersistenceCapableTest.configurePmf;
 import static org.dependencytrack.PersistenceCapableTest.truncateTables;
+
 
 public abstract class ResourceTest {
 
@@ -73,7 +71,6 @@ public abstract class ResourceTest {
     protected final String V1_PROJECT = "/v1/project";
     protected final String V1_PROJECT_LATEST = "/v1/project/latest/";
     protected final String V1_REPOSITORY = "/v1/repository";
-    protected final String V1_ROLE = "/v1/role";
     protected final String V1_SCAN = "/v1/scan";
     protected final String V1_SEARCH = "/v1/search";
     protected final String V1_TEAM = "/v1/team";
@@ -99,37 +96,35 @@ public abstract class ResourceTest {
     // Hashing is expensive. Do it once and re-use across tests as much as possible.
     protected static final String TEST_USER_PASSWORD_HASH = new String(PasswordService.createHash("testuser".toCharArray()));
 
-    protected static PostgresTestContainer postgresContainer;
-
     protected QueryManager qm;
-    protected MockProducer<byte[], byte[]> kafkaMockProducer;
     protected Team team;
     protected String apiKey;
 
-    @BeforeClass
+    @BeforeAll
     public static void init() {
-        Config.enableUnitTests();
-
-        postgresContainer = new PostgresTestContainer();
-        postgresContainer.start();
+        TestDatabaseManager.initialize();
     }
 
-    @Before
+    @BeforeEach
     public void before() throws Exception {
-        truncateTables(postgresContainer);
-        configurePmf(postgresContainer);
+        truncateTables();
 
         // Add a test user and team with API key. Optional if this is used, but its available to all tests.
         this.qm = new QueryManager();
-        PluginManagerTestUtil.loadPlugins();
-        this.kafkaMockProducer = (MockProducer<byte[], byte[]>) KafkaProducerInitializer.getProducer();
         team = qm.createTeam("Test Users");
         this.apiKey = qm.createApiKey(team).getKey();
     }
 
-    @After
+    @AfterEach
     public void after() {
-        PluginManagerTestUtil.unloadPlugins();
+        // Ensure that any events dispatched during the test are drained
+        // to prevent them from impacting other tests.
+        try {
+            EventService.getInstance().drain(Duration.ofSeconds(5));
+            SingleThreadedEventService.getInstance().drain(Duration.ofSeconds(5));
+        } catch (TimeoutException e) {
+            throw new IllegalStateException("Failed to drain event services", e);
+        }
 
         // PersistenceManager will refuse to close when there's an active transaction
         // that was neither committed nor rolled back. Unfortunately some areas of the
@@ -140,15 +135,7 @@ public abstract class ResourceTest {
             qm.getPersistenceManager().currentTransaction().rollback();
         }
 
-        PersistenceManagerFactory.tearDown();
-        KafkaProducerInitializer.tearDown();
-    }
-
-    @AfterClass
-    public static void tearDownClass() {
-        if (postgresContainer != null) {
-            postgresContainer.stopWhenNotReusing();
-        }
+        qm.close();
     }
 
     public void initializeWithPermissions(Permissions... permissions) {

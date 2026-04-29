@@ -24,6 +24,9 @@ import alpine.persistence.PaginatedResult;
 import alpine.resources.AlpineRequest;
 import com.github.packageurl.MalformedPackageURLException;
 import com.github.packageurl.PackageURL;
+import jakarta.json.Json;
+import jakarta.json.JsonArray;
+import jakarta.json.JsonValue;
 import org.apache.commons.lang3.tuple.Pair;
 import org.dependencytrack.model.Component;
 import org.dependencytrack.model.ComponentIdentity;
@@ -31,20 +34,17 @@ import org.dependencytrack.model.ComponentMetaInformation;
 import org.dependencytrack.model.ComponentOccurrence;
 import org.dependencytrack.model.ComponentProperty;
 import org.dependencytrack.model.DependencyMetrics;
+import org.dependencytrack.model.PackageMetadata;
 import org.dependencytrack.model.Project;
 import org.dependencytrack.model.RepositoryMetaComponent;
 import org.dependencytrack.model.RepositoryType;
 import org.dependencytrack.model.sqlmapping.ComponentProjection;
-import org.dependencytrack.persistence.RepositoryQueryManager.RepositoryMetaComponentSearch;
 import org.dependencytrack.persistence.jdbi.ComponentMetaDao;
 import org.dependencytrack.persistence.jdbi.MetricsDao;
-import org.dependencytrack.persistence.jdbi.RepositoryMetaDao;
+import org.dependencytrack.persistence.jdbi.PackageMetadataDao;
 import org.dependencytrack.resources.v1.vo.DependencyGraphResponse;
-import org.dependencytrack.tasks.IntegrityMetaInitializerTask;
+import org.dependencytrack.util.PurlUtil;
 
-import jakarta.json.Json;
-import jakarta.json.JsonArray;
-import jakarta.json.JsonValue;
 import javax.jdo.PersistenceManager;
 import javax.jdo.Query;
 import java.io.StringReader;
@@ -82,6 +82,14 @@ final class ComponentQueryManager extends QueryManager implements IQueryManager 
      */
     ComponentQueryManager(final PersistenceManager pm, final AlpineRequest request) {
         super(pm, request);
+    }
+
+    public boolean hasComponents(Project project) {
+        final Query<?> query = pm.newQuery(Query.SQL, /* language=SQL */ """
+                SELECT EXISTS(SELECT 1 FROM "COMPONENT" WHERE "PROJECT_ID" = ?)
+                """);
+        query.setParameters(project.getId());
+        return executeAndCloseResultUnique(query, Boolean.class);
     }
 
     /**
@@ -171,16 +179,44 @@ final class ComponentQueryManager extends QueryManager implements IQueryManager 
                         "D0"."ISOSIAPPROVED" AS "isOsiApproved",
                         "D0"."UUID" AS "licenseUuid",
                         "D0"."NAME" AS "licenseName",
-                        "I0"."LAST_FETCH" AS "lastFetch",
+                        "I0"."RESOLVED_AT" AS "lastFetch",
                         "I0"."PUBLISHED_AT" AS "publishedAt",
-                        "IA"."INTEGRITY_CHECK_STATUS" AS "integrityCheckStatus",
-                        "I0"."REPOSITORY_URL" AS "integrityRepoUrl",
+                        CASE
+                          WHEN "I0"."PURL" IS NULL
+                          THEN NULL
+                          WHEN "A0"."SHA_256" IS NOT NULL AND "I0"."HASH_SHA256" IS NOT NULL
+                          THEN CASE
+                                 WHEN LOWER("A0"."SHA_256") = LOWER("I0"."HASH_SHA256")
+                                 THEN 'HASH_MATCH_PASSED'
+                                 ELSE 'HASH_MATCH_FAILED'
+                               END
+                          WHEN "A0"."SHA_512" IS NOT NULL AND "I0"."HASH_SHA512" IS NOT NULL
+                          THEN CASE
+                                 WHEN LOWER("A0"."SHA_512") = LOWER("I0"."HASH_SHA512")
+                                 THEN 'HASH_MATCH_PASSED'
+                                 ELSE 'HASH_MATCH_FAILED'
+                               END
+                          WHEN "A0"."SHA1" IS NOT NULL AND "I0"."HASH_SHA1" IS NOT NULL
+                          THEN CASE
+                                 WHEN LOWER("A0"."SHA1") = LOWER("I0"."HASH_SHA1")
+                                 THEN 'HASH_MATCH_PASSED'
+                                 ELSE 'HASH_MATCH_FAILED'
+                               END
+                          WHEN "A0"."MD5" IS NOT NULL AND "I0"."HASH_MD5" IS NOT NULL
+                          THEN CASE
+                                 WHEN LOWER("A0"."MD5") = LOWER("I0"."HASH_MD5")
+                                 THEN 'HASH_MATCH_PASSED'
+                                 ELSE 'HASH_MATCH_FAILED'
+                               END
+                          WHEN "A0"."SHA_256" IS NULL AND "A0"."SHA_512" IS NULL AND "A0"."SHA1" IS NULL AND "A0"."MD5" IS NULL
+                          THEN 'COMPONENT_MISSING_HASH'
+                          ELSE 'HASH_MATCH_UNKNOWN'
+                        END AS "integrityCheckStatus",
                         (SELECT COUNT(*) FROM "COMPONENT_OCCURRENCE" WHERE "COMPONENT_ID" = "A0"."ID") AS "occurrenceCount",
                         COUNT(*) OVER() AS "totalCount"
                 FROM "COMPONENT" "A0"
                 INNER JOIN "PROJECT" "B0" ON "A0"."PROJECT_ID" = "B0"."ID"
-                LEFT JOIN "INTEGRITY_META_COMPONENT" "I0" ON "A0"."PURL" = "I0"."PURL"
-                LEFT JOIN "INTEGRITY_ANALYSIS" "IA" ON "A0"."ID" = "IA"."COMPONENT_ID"
+                LEFT JOIN "PACKAGE_ARTIFACT_METADATA" "I0" ON "A0"."PURL" = "I0"."PURL"
                 LEFT OUTER JOIN "LICENSE" "D0" ON "A0"."LICENSE_ID" = "D0"."ID"
                 WHERE "A0"."PROJECT_ID" = :projectId
                 """;
@@ -196,17 +232,15 @@ final class ComponentQueryManager extends QueryManager implements IQueryManager 
         }
 
         if (onlyOutdated) {
-            // Components are considered outdated when metadata does exists, but the version is different than latestVersion
-            // Different should always mean version < latestVersion
-            // Hack JDO using % instead of .* to get the SQL LIKE clause working:
-            queryString +=
-                    """
-                        AND NOT (NOT EXISTS (
-                        SELECT "M"."ID"
-                        FROM "REPOSITORY_META_COMPONENT" "M" WHERE "M"."NAME" = "A0"."NAME"
-                        AND ("M"."NAMESPACE" = "A0"."GROUP" OR "M"."NAMESPACE" IS NULL OR "A0"."GROUP" IS NULL)
-                        AND "M"."LATEST_VERSION" <> "A0"."VERSION"
-                        AND "A0"."PURL" LIKE (('pkg:' || LOWER("M"."REPOSITORY_TYPE")) || '/%') ESCAPE E'\\\\'))
+            queryString += /* language=SQL */ """
+                    AND EXISTS (
+                      SELECT 1
+                        FROM "PACKAGE_ARTIFACT_METADATA" "PAM"
+                       INNER JOIN "PACKAGE_METADATA" "PM"
+                          ON "PM"."PURL" = "PAM"."PACKAGE_PURL"
+                       WHERE "PAM"."PURL" = "A0"."PURL"
+                         AND "PM"."LATEST_VERSION" != "A0"."VERSION"
+                    )
                     """;
         }
         if (onlyDirect) {
@@ -329,22 +363,6 @@ final class ComponentQueryManager extends QueryManager implements IQueryManager 
     }
 
     /**
-     * Returns ComponentProjection for the purl.
-     *
-     * @param purl the purl of the component to retrieve
-     * @return associated ComponentProjection
-     */
-    public IntegrityMetaInitializerTask.ComponentProjection getComponentByPurl(String purl) {
-        if (purl == null) {
-            return null;
-        }
-        final Query<Component> query = pm.newQuery(Component.class, "purl == :purl");
-        query.setParameters(purl);
-        query.setResult("DISTINCT purlCoordinates, internal");
-        return query.executeResultUnique(IntegrityMetaInitializerTask.ComponentProjection.class);
-    }
-
-    /**
      * Returns Components by their identity.
      *
      * @param identity       the ComponentIdentity to query against
@@ -382,8 +400,11 @@ final class ComponentQueryManager extends QueryManager implements IQueryManager 
 
             result = loadComponents("(" + String.join(" && ", queryFilterElements) + ")", queryParams);
         } else if (identity.getPurl() != null) {
-            queryFilterElements.add("purl.toLowerCase().matches(:purl)");
-            queryParams.put("purl", ".*" + identity.getPurl().canonicalize().toLowerCase() + ".*");
+            // "contains" conditions with wildcards on both sides don't make sense here
+            // given we already require a valid PURL to be provided. There will always
+            // be a mandatory prefix such as "pkg:npm/foo".
+            queryFilterElements.add("purl.toLowerCase().startsWith(:purl)");
+            queryParams.put("purl", identity.getPurl().canonicalize().toLowerCase());
 
             result = loadComponents("(" + String.join(" && ", queryFilterElements) + ")", queryParams);
         } else if (identity.getCpe() != null) {
@@ -438,45 +459,6 @@ final class ComponentQueryManager extends QueryManager implements IQueryManager 
     public Component createComponent(Component component, boolean commitIndex) {
         final Component result = persist(component);
         return result;
-    }
-
-    public Component cloneComponent(Component sourceComponent, Project destinationProject, boolean commitIndex) {
-        final Component component = new Component();
-        component.setGroup(sourceComponent.getGroup());
-        component.setName(sourceComponent.getName());
-        component.setVersion(sourceComponent.getVersion());
-        component.setClassifier(sourceComponent.getClassifier());
-        component.setFilename(sourceComponent.getFilename());
-        component.setExtension(sourceComponent.getExtension());
-        component.setMd5(sourceComponent.getMd5());
-        component.setSha1(sourceComponent.getSha1());
-        component.setSha256(sourceComponent.getSha256());
-        component.setSha384(sourceComponent.getSha384());
-        component.setSha512(sourceComponent.getSha512());
-        component.setSha3_256(sourceComponent.getSha3_256());
-        component.setSha3_384(sourceComponent.getSha3_384());
-        component.setSha3_512(sourceComponent.getSha3_512());
-        component.setBlake2b_256(sourceComponent.getBlake2b_256());
-        component.setBlake2b_384(sourceComponent.getBlake2b_384());
-        component.setBlake2b_512(sourceComponent.getBlake2b_512());
-        component.setBlake3(sourceComponent.getBlake3());
-        component.setCpe(sourceComponent.getCpe());
-        component.setPurl(sourceComponent.getPurl());
-        component.setPurlCoordinates(sourceComponent.getPurlCoordinates());
-        component.setSwidTagId(sourceComponent.getSwidTagId());
-        component.setInternal(sourceComponent.isInternal());
-        component.setDescription(sourceComponent.getDescription());
-        component.setCopyright(sourceComponent.getCopyright());
-        component.setLicense(sourceComponent.getLicense());
-        component.setLicenseExpression(sourceComponent.getLicenseExpression());
-        component.setLicenseUrl(sourceComponent.getLicenseUrl());
-        component.setResolvedLicense(sourceComponent.getResolvedLicense());
-        component.setAuthors(sourceComponent.getAuthors());
-        component.setSupplier(sourceComponent.getSupplier());
-        component.setDirectDependencies(sourceComponent.getDirectDependencies());
-        // TODO Add support for parent component and children components
-        component.setProject(destinationProject);
-        return createComponent(component, commitIndex);
     }
 
     /**
@@ -607,9 +589,34 @@ final class ComponentQueryManager extends QueryManager implements IQueryManager 
             getRootDependencies(dependencyGraph, project);
             getDirectDependenciesForPathDependencies(dependencyGraph);
         }
+
+        final var packagePurlByComponentUuid = new HashMap<String, String>();
+        for (final var entry : dependencyGraph.entrySet()) {
+            final String componentUuid = entry.getKey();
+            final Component component = entry.getValue();
+
+            if (component.getPurl() != null) {
+                packagePurlByComponentUuid.put(
+                        componentUuid,
+                        PurlUtil.purlPackageOnly(component.getPurl()));
+            }
+        }
+
+        final var latestVersionByPackagePurl = new HashMap<String, String>();
+        if (!packagePurlByComponentUuid.isEmpty()) {
+            final List<PackageMetadata> packageMetadataList = withJdbiHandle(
+                    handle -> new PackageMetadataDao(handle).getAll(
+                            new HashSet<>(packagePurlByComponentUuid.values())));
+            for (final PackageMetadata packageMetadata : packageMetadataList) {
+                if (packageMetadata.latestVersion() != null) {
+                    latestVersionByPackagePurl.put(packageMetadata.purl().canonicalize(), packageMetadata.latestVersion());
+                }
+            }
+        }
+
         // Reduce size of JSON response
-        for (Map.Entry<String, Component> entry : dependencyGraph.entrySet()) {
-            Component transientComponent = new Component();
+        for (final Map.Entry<String, Component> entry : dependencyGraph.entrySet()) {
+            final Component transientComponent = new Component();
             transientComponent.setUuid(entry.getValue().getUuid());
             transientComponent.setName(entry.getValue().getName());
             transientComponent.setVersion(entry.getValue().getVersion());
@@ -617,15 +624,13 @@ final class ComponentQueryManager extends QueryManager implements IQueryManager 
             transientComponent.setPurlCoordinates(entry.getValue().getPurlCoordinates());
             transientComponent.setDependencyGraph(entry.getValue().getDependencyGraph());
             transientComponent.setExpandDependencyGraph(entry.getValue().isExpandDependencyGraph());
-            if (transientComponent.getPurl() != null) {
-                final RepositoryType type = RepositoryType.resolve(transientComponent.getPurl());
-                if (RepositoryType.UNSUPPORTED != type) {
-                    final RepositoryMetaComponent repoMetaComponent = getRepositoryMetaComponent(type, transientComponent.getPurl().getNamespace(), transientComponent.getPurl().getName());
-                    if (repoMetaComponent != null) {
-                        RepositoryMetaComponent transientRepoMetaComponent = new RepositoryMetaComponent();
-                        transientRepoMetaComponent.setLatestVersion(repoMetaComponent.getLatestVersion());
-                        transientComponent.setRepositoryMeta(transientRepoMetaComponent);
-                    }
+            final String packagePurl = packagePurlByComponentUuid.get(entry.getKey());
+            if (packagePurl != null) {
+                final String latestVersion = latestVersionByPackagePurl.get(packagePurl);
+                if (latestVersion != null) {
+                    final var transientRepoMetaComponent = new RepositoryMetaComponent();
+                    transientRepoMetaComponent.setLatestVersion(latestVersion);
+                    transientComponent.setRepositoryMeta(transientRepoMetaComponent);
                 }
             }
             dependencyGraph.put(entry.getKey(), transientComponent);
@@ -924,29 +929,21 @@ final class ComponentQueryManager extends QueryManager implements IQueryManager 
     }
 
     private void populateRepositoryMetadata(final Collection<Component> components) {
-        final Map<RepositoryMetaComponentSearch, List<Component>> componentsByRepoMetaSearch = components.stream()
+        final Map<String, List<Component>> componentsByPurlPackage = components.stream()
                 .filter(component -> component.getPurl() != null)
                 .filter(component -> RepositoryType.UNSUPPORTED != RepositoryType.resolve(component.getPurl()))
-                .collect(Collectors.groupingBy(component -> {
-                    final PackageURL purl = component.getPurl();
-                    final var repositoryType = RepositoryType.resolve(purl);
-                    return new RepositoryMetaComponentSearch(repositoryType, purl.getNamespace(), purl.getName());
-                }));
-        if (componentsByRepoMetaSearch.isEmpty()) {
+                .collect(Collectors.groupingBy(component -> PurlUtil.purlPackageOnly(component.getPurl())));
+        if (componentsByPurlPackage.isEmpty()) {
             return;
         }
 
-        final List<RepositoryMetaComponent> repoMetaComponents = withJdbiHandle(
-                handle -> handle.attach(RepositoryMetaDao.class).getRepositoryMetaComponents(
-                        componentsByRepoMetaSearch.keySet()));
-        for (final RepositoryMetaComponent repoMetaComponent : repoMetaComponents) {
-            final var search = new RepositoryMetaComponentSearch(
-                    repoMetaComponent.getRepositoryType(),
-                    repoMetaComponent.getNamespace(),
-                    repoMetaComponent.getName());
-            final List<Component> searchComponents = componentsByRepoMetaSearch.get(search);
-            if (searchComponents != null) {
-                for (final Component component : searchComponents) {
+        final List<PackageMetadata> packageMetadataList = withJdbiHandle(
+                handle -> new PackageMetadataDao(handle).getAll(componentsByPurlPackage.keySet()));
+        for (final PackageMetadata pm : packageMetadataList) {
+            final List<Component> matchingComponents = componentsByPurlPackage.get(pm.purl().canonicalize());
+            if (matchingComponents != null) {
+                final var repoMetaComponent = RepositoryMetaComponent.of(pm);
+                for (final Component component : matchingComponents) {
                     component.setRepositoryMeta(repoMetaComponent);
                 }
             }

@@ -18,24 +18,23 @@
  */
 package alpine.event.framework;
 
-import alpine.common.logging.Logger;
-import alpine.common.metrics.Metrics;
 import alpine.common.util.ThreadUtil;
-import org.apache.commons.lang3.concurrent.BasicThreadFactory;
+import io.micrometer.core.instrument.Metrics;
+import io.micrometer.core.instrument.binder.jvm.ExecutorServiceMetrics;
 
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 
 /**
  * A publish/subscribe (pub/sub) event service that provides the ability to publish events and
  * asynchronously inform all subscribers to subscribed events.
  *
- * This class will use a configurable number of worker threads when processing events.
+ * This class will use virtual threads with a semaphore-based concurrency limit
+ * when processing events.
  *
- * @see alpine.Config.AlpineKey#WORKER_THREADS
- * @see alpine.Config.AlpineKey#WORKER_THREAD_MULTIPLIER
+ * @see alpine.config.AlpineConfigKeys#WORKER_THREADS
+ * @see alpine.config.AlpineConfigKeys#WORKER_THREAD_MULTIPLIER
  * @see ThreadUtil#determineNumberOfWorkerThreads()
  *
  * @author Steve Springett
@@ -43,31 +42,37 @@ import java.util.concurrent.TimeUnit;
  */
 public final class EventService extends BaseEventService {
 
-    private static final EventService INSTANCE = new EventService();
-    private static final Logger LOGGER = Logger.getLogger(EventService.class);
-    private static final ExecutorService EXECUTOR;
+    private static final EventService INSTANCE;
     private static final String EXECUTOR_NAME = "Alpine-EventService";
 
     static {
-        BasicThreadFactory factory = new BasicThreadFactory.Builder()
-                .namingPattern(EXECUTOR_NAME + "-%d")
-                .uncaughtExceptionHandler(new LoggableUncaughtExceptionHandler())
-                .build();
-        final int threadPoolSize = ThreadUtil.determineNumberOfWorkerThreads();
-        EXECUTOR = new ThreadPoolExecutor(threadPoolSize, threadPoolSize, 0L, TimeUnit.MILLISECONDS,
-                new LinkedBlockingQueue<>(), factory);
-        INSTANCE.setExecutorService(EXECUTOR);
-        INSTANCE.setLogger(LOGGER);
-        Metrics.registerExecutorService(EXECUTOR, EXECUTOR_NAME);
+        final ExecutorConfig config = createExecutorConfig();
+        INSTANCE = new EventService(config.executor(), config.semaphore());
+        new ExecutorServiceMetrics(INSTANCE.getExecutor(), EXECUTOR_NAME, null)
+                .bindTo(Metrics.globalRegistry);
     }
 
-    /**
-     * Private constructor
-     */
-    private EventService() { }
+    private EventService(ExecutorService executor, Semaphore semaphore) {
+        super(executor, semaphore);
+    }
 
     public static EventService getInstance() {
         return INSTANCE;
+    }
+
+    @Override
+    ExecutorConfig executorConfig() {
+        return createExecutorConfig();
+    }
+
+    private static ExecutorConfig createExecutorConfig() {
+        final ExecutorService executor = Executors.newThreadPerTaskExecutor(
+                Thread.ofVirtual()
+                        .name(EXECUTOR_NAME + "-", 0)
+                        .uncaughtExceptionHandler(new LoggableUncaughtExceptionHandler())
+                        .factory());
+        final var semaphore = new Semaphore(ThreadUtil.determineNumberOfWorkerThreads());
+        return new ExecutorConfig(executor, semaphore);
     }
 
 }

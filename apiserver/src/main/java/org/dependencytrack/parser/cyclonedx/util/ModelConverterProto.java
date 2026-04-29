@@ -18,7 +18,6 @@
  */
 package org.dependencytrack.parser.cyclonedx.util;
 
-import alpine.common.logging.Logger;
 import alpine.model.IConfigProperty;
 import com.github.packageurl.MalformedPackageURLException;
 import com.github.packageurl.PackageURL;
@@ -47,8 +46,10 @@ import org.dependencytrack.model.Project;
 import org.dependencytrack.model.ProjectMetadata;
 import org.dependencytrack.model.ServiceComponent;
 import org.dependencytrack.model.Tools;
+import org.dependencytrack.parser.spdx.expression.SpdxExpression;
 import org.dependencytrack.parser.spdx.expression.SpdxExpressionParser;
-import org.dependencytrack.parser.spdx.expression.model.SpdxExpression;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -67,7 +68,7 @@ import static org.dependencytrack.util.PurlUtil.silentPurlCoordinatesOnly;
 
 public class ModelConverterProto {
 
-    private static final Logger LOGGER = Logger.getLogger(ModelConverterProto.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(ModelConverterProto.class);
 
     /**
      * Private Constructor.
@@ -235,14 +236,13 @@ public class ModelConverterProto {
                 final String licenseExpression = licenseChoice.getExpression();
                 if (isNotBlank(licenseExpression)) {
                     // If the expression consists of just one license ID, add it as another option.
-                    final var expressionParser = new SpdxExpressionParser();
-                    final SpdxExpression expression = expressionParser.parse(licenseExpression);
-                    if (!SpdxExpression.INVALID.equals(expression)) {
+                    final SpdxExpression expression = SpdxExpressionParser.getInstance().tryParse(licenseExpression);
+                    if (expression != null) {
                         component.setLicenseExpression(trim(licenseExpression));
-                        if (expression.getSpdxLicenseId() != null) {
+                        if (expression instanceof SpdxExpression.Identifier(String id)) {
                             final var expressionLicense = new License();
-                            expressionLicense.setId(expression.getSpdxLicenseId());
-                            expressionLicense.setName(expression.getSpdxLicenseId());
+                            expressionLicense.setId(id);
+                            expressionLicense.setName(id);
                             licenseCandidates.add(expressionLicense);
                         }
                     } else {
@@ -455,6 +455,23 @@ public class ModelConverterProto {
                 default -> null;
             };
         return Optional.ofNullable(classifier);
+    }
+
+    public static Classification convertClassifier(Classifier classifier) {
+        return switch (classifier) {
+            case APPLICATION -> Classification.CLASSIFICATION_APPLICATION;
+            case FRAMEWORK -> Classification.CLASSIFICATION_FRAMEWORK;
+            case LIBRARY -> Classification.CLASSIFICATION_LIBRARY;
+            case OPERATING_SYSTEM -> Classification.CLASSIFICATION_OPERATING_SYSTEM;
+            case DEVICE -> Classification.CLASSIFICATION_DEVICE;
+            case FILE -> Classification.CLASSIFICATION_FILE;
+            case CONTAINER -> Classification.CLASSIFICATION_CONTAINER;
+            case FIRMWARE -> Classification.CLASSIFICATION_FIRMWARE;
+            case DEVICE_DRIVER -> Classification.CLASSIFICATION_DEVICE_DRIVER;
+            case PLATFORM -> Classification.CLASSIFICATION_PLATFORM;
+            case MACHINE_LEARNING_MODEL -> Classification.CLASSIFICATION_MACHINE_LEARNING_MODEL;
+            case DATA -> Classification.CLASSIFICATION_DATA;
+        };
     }
 
     private static List<ExternalReference> convertExternalReferences(final List<org.cyclonedx.proto.v1_6.ExternalReference> cdxExternalReferences) {

@@ -22,6 +22,7 @@ import alpine.model.Team;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import io.swagger.v3.oas.annotations.media.Schema;
 import org.dependencytrack.model.Classifier;
+import org.dependencytrack.model.ProjectCollectionLogic;
 import org.dependencytrack.model.Tag;
 import org.dependencytrack.persistence.jdbi.ProjectDao.ConciseProjectListRow;
 
@@ -44,10 +45,12 @@ public record ConciseProject(
         @Schema(description = "Classifier of the project") Classifier classifier,
         @Schema(description = "Whether the project is active", requiredMode = Schema.RequiredMode.REQUIRED) boolean active,
         @Schema(description = "Whether the project version is latest") boolean isLatest,
+        @Schema(description = "Collection logic for aggregating child metrics") ProjectCollectionLogic collectionLogic,
         @Schema(description = "Tags associated with the project") List<Tag> tags,
         @Schema(description = "Teams associated with the project") List<Team> teams,
         @Schema(description = "Timestamp of the last BOM import", type = "number", example = "1719499619599") Date lastBomImport,
         @Schema(description = "Format of the last imported BOM") String lastBomImportFormat,
+        @Schema(description = "Last observed risk score") Double lastRiskScore,
         @Schema(description = "Whether the project has children", requiredMode = Schema.RequiredMode.REQUIRED) boolean hasChildren,
         @Schema(description = "Latest metrics for the project") ConciseProjectMetrics metrics
 ) {
@@ -57,10 +60,12 @@ public record ConciseProject(
                 row.classifier() != null ? Classifier.valueOf(row.classifier()) : null,
                 row.inactiveSince() == null,
                 row.isLatest(),
+                row.collectionLogic(),
                 convertTags(row.tags()),
                 convertTeams(row.teams()),
                 row.lastBomImport() != null ? Date.from(row.lastBomImport()) : null,
                 row.lastBomImportFormat(),
+                row.lastRiskScore(),
                 row.hasChildren(),
                 row.metrics() != null ? new ConciseProjectMetrics(row.metrics()) : null);
     }

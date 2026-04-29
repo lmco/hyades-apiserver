@@ -18,30 +18,28 @@
  */
 package org.dependencytrack.tasks;
 
-import alpine.common.logging.Logger;
 import alpine.event.framework.Event;
 import alpine.event.framework.Subscriber;
-import alpine.notification.Notification;
-import alpine.notification.NotificationLevel;
 import org.cyclonedx.parsers.BomParserFactory;
 import org.cyclonedx.parsers.Parser;
 import org.dependencytrack.event.VexUploadEvent;
-import org.dependencytrack.event.kafka.KafkaEventDispatcher;
 import org.dependencytrack.model.ConfigPropertyConstants;
 import org.dependencytrack.model.Project;
 import org.dependencytrack.model.Vex;
 import org.dependencytrack.model.Vulnerability;
-import org.dependencytrack.notification.NotificationConstants;
-import org.dependencytrack.notification.NotificationGroup;
-import org.dependencytrack.notification.NotificationScope;
-import org.dependencytrack.notification.vo.VexConsumedOrProcessed;
+import org.dependencytrack.notification.JdoNotificationEmitter;
+import org.dependencytrack.notification.NotificationModelConverter;
 import org.dependencytrack.parser.cyclonedx.CycloneDXVexImporter;
 import org.dependencytrack.persistence.QueryManager;
 import org.dependencytrack.util.CompressUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.util.Base64;
 import java.util.Date;
 import java.util.List;
+
+import static org.dependencytrack.notification.api.NotificationFactory.createVexConsumedNotification;
+import static org.dependencytrack.notification.api.NotificationFactory.createVexProcessedNotification;
 
 /**
  * Subscriber task that performs processing of VEX when it is uploaded.
@@ -51,9 +49,7 @@ import java.util.List;
  */
 public class VexUploadProcessingTask implements Subscriber {
 
-    private static final Logger LOGGER = Logger.getLogger(VexUploadProcessingTask.class);
-
-    private final KafkaEventDispatcher eventDispatcher = new KafkaEventDispatcher();
+    private static final Logger LOGGER = LoggerFactory.getLogger(VexUploadProcessingTask.class);
 
     /**
      * {@inheritDoc}
@@ -66,25 +62,22 @@ public class VexUploadProcessingTask implements Subscriber {
                 final Project project = qm.getObjectByUuid(Project.class, event.getProjectUuid());
                 final List<Vulnerability> vulnerabilities;
 
-                // Holds a list of all Components that are existing dependencies of the specified project
-                final List<Vulnerability> existingProjectVulnerabilities = qm.getVulnerabilities(project, true);
-                final Vex.Format vexFormat;
-                final String vexSpecVersion;
-                final Integer vexVersion;
-                final String serialNumnber;
-                org.cyclonedx.model.Bom cycloneDxBom = null;
+                final Vex vex = new Vex();
+                vex.setProject(project);
+                vex.setImported(new Date());
+
                 if (BomParserFactory.looksLikeCycloneDX(vexBytes)) {
                     if (qm.isEnabled(ConfigPropertyConstants.ACCEPT_ARTIFACT_CYCLONEDX)) {
-                        LOGGER.info("Processing CycloneDX VEX uploaded to project: " + event.getProjectUuid());
-                        vexFormat = Vex.Format.CYCLONEDX;
+                        LOGGER.info("Processing CycloneDX VEX uploaded to project: {}", event.getProjectUuid());
+                        vex.setVexFormat(Vex.Format.CYCLONEDX);
                         final Parser parser = BomParserFactory.createParser(vexBytes);
-                        cycloneDxBom = parser.parse(vexBytes);
-                        vexSpecVersion = cycloneDxBom.getSpecVersion();
-                        vexVersion = cycloneDxBom.getVersion();
-                        serialNumnber = cycloneDxBom.getSerialNumber();
+                        final org.cyclonedx.model.Bom cycloneDxBom = parser.parse(vexBytes);
+                        vex.setSpecVersion(cycloneDxBom.getSpecVersion());
+                        vex.setVexVersion(cycloneDxBom.getVersion());
+                        vex.setSerialNumber(cycloneDxBom.getSerialNumber());
                         final CycloneDXVexImporter vexImporter = new CycloneDXVexImporter();
                         vexImporter.applyVex(qm, cycloneDxBom, project);
-                        LOGGER.info("Completed processing of CycloneDX VEX for project: " + event.getProjectUuid());
+                        LOGGER.info("Completed processing of CycloneDX VEX for project: {}", event.getProjectUuid());
                     } else {
                         LOGGER.warn("A CycloneDX VEX was uploaded but accepting CycloneDX format is disabled. Aborting");
                         return;
@@ -94,28 +87,19 @@ public class VexUploadProcessingTask implements Subscriber {
                     LOGGER.warn("The VEX uploaded is not in a supported format. Supported formats include CycloneDX XML and JSON");
                     return;
                 }
-                final Project copyOfProject = qm.detach(Project.class, qm.getObjectById(Project.class, project.getId()).getId());
-                String content = "A " + vexFormat.getFormatShortName() + " VEX was consumed and will be processed";
-                Object subject = new VexConsumedOrProcessed(copyOfProject, Base64.getEncoder().encodeToString(vexBytes), vexFormat, vexSpecVersion);
-                eventDispatcher.dispatchNotification(new Notification()
-                        .scope(NotificationScope.PORTFOLIO)
-                        .group(NotificationGroup.VEX_CONSUMED)
-                        .level(NotificationLevel.INFORMATIONAL)
-                        .title(NotificationConstants.Title.VEX_CONSUMED)
-                        .content(content)
-                        .subject(subject));
-                qm.createVex(project, new Date(), vexFormat, vexSpecVersion, vexVersion, serialNumnber);
 
-                final Project detachedProject = qm.detach(Project.class, project.getId());
-                content = "A " + vexFormat.getFormatShortName() + " VEX was processed";
-                subject = new VexConsumedOrProcessed(detachedProject, Base64.getEncoder().encodeToString(vexBytes), vexFormat, vexSpecVersion);
-                eventDispatcher.dispatchNotification(new Notification()
-                        .scope(NotificationScope.PORTFOLIO)
-                        .group(NotificationGroup.VEX_PROCESSED)
-                        .level(NotificationLevel.INFORMATIONAL)
-                        .title(NotificationConstants.Title.VEX_PROCESSED)
-                        .content(content)
-                        .subject(subject));
+                final var notificationEmitter = new JdoNotificationEmitter(qm);
+
+                notificationEmitter.emit(
+                        createVexConsumedNotification(
+                                NotificationModelConverter.convert(project),
+                                NotificationModelConverter.convert(vex)));
+                qm.persist(vex);
+
+                notificationEmitter.emit(
+                        createVexProcessedNotification(
+                                NotificationModelConverter.convert(project),
+                                NotificationModelConverter.convert(vex)));
             } catch (Exception ex) {
                 LOGGER.error("Error while processing vex", ex);
             }

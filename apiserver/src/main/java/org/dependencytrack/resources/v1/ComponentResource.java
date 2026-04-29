@@ -18,11 +18,9 @@
  */
 package org.dependencytrack.resources.v1;
 
-import alpine.common.logging.Logger;
 import alpine.event.framework.Event;
 import alpine.persistence.PaginatedResult;
 import alpine.server.auth.PermissionRequired;
-import alpine.server.filters.ResourceAccessRequired;
 import com.github.packageurl.MalformedPackageURLException;
 import com.github.packageurl.PackageURL;
 import io.swagger.v3.oas.annotations.Operation;
@@ -50,46 +48,34 @@ import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 import org.apache.commons.lang3.StringUtils;
 import org.dependencytrack.auth.Permissions;
-import org.dependencytrack.event.ComponentVulnerabilityAnalysisEvent;
 import org.dependencytrack.event.InternalComponentIdentificationEvent;
-import org.dependencytrack.event.kafka.KafkaEventDispatcher;
-import org.dependencytrack.event.kafka.componentmeta.ComponentProjection;
-import org.dependencytrack.event.kafka.componentmeta.Handler;
-import org.dependencytrack.event.kafka.componentmeta.HandlerFactory;
 import org.dependencytrack.model.Component;
 import org.dependencytrack.model.ComponentIdentity;
 import org.dependencytrack.model.ComponentOccurrence;
-import org.dependencytrack.model.IntegrityAnalysis;
-import org.dependencytrack.model.IntegrityMetaComponent;
 import org.dependencytrack.model.License;
+import org.dependencytrack.model.PackageMetadata;
 import org.dependencytrack.model.Project;
 import org.dependencytrack.model.RepositoryMetaComponent;
 import org.dependencytrack.model.RepositoryType;
-import org.dependencytrack.model.VulnerabilityAnalysisLevel;
-import org.dependencytrack.model.VulnerabilityScan;
 import org.dependencytrack.model.validation.ValidUuid;
 import org.dependencytrack.persistence.QueryManager;
 import org.dependencytrack.persistence.jdbi.ComponentDao;
 import org.dependencytrack.persistence.jdbi.ComponentMetaDao;
-import org.dependencytrack.persistence.jdbi.VulnerabilityScanDao;
-import org.dependencytrack.proto.repometaanalysis.v1.FetchMeta;
+import org.dependencytrack.persistence.jdbi.PackageMetadataDao;
 import org.dependencytrack.resources.AbstractApiResource;
 import org.dependencytrack.resources.v1.openapi.PaginatedApi;
 import org.dependencytrack.resources.v1.problems.ProblemDetails;
 import org.dependencytrack.util.InternalComponentIdentifier;
 import org.dependencytrack.util.PurlUtil;
 import org.jdbi.v3.core.Handle;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import static org.dependencytrack.event.kafka.componentmeta.IntegrityCheck.calculateIntegrityResult;
-import static org.dependencytrack.model.FetchStatus.NOT_AVAILABLE;
-import static org.dependencytrack.model.FetchStatus.PROCESSED;
-import static org.dependencytrack.persistence.jdbi.JdbiFactory.createLocalJdbi;
 import static org.dependencytrack.persistence.jdbi.JdbiFactory.openJdbiHandle;
 import static org.dependencytrack.persistence.jdbi.JdbiFactory.withJdbiHandle;
 
@@ -107,8 +93,7 @@ import static org.dependencytrack.persistence.jdbi.JdbiFactory.withJdbiHandle;
 })
 public class ComponentResource extends AbstractApiResource {
 
-    private static final Logger LOGGER = Logger.getLogger(ComponentResource.class);
-    private final KafkaEventDispatcher kafkaEventDispatcher = new KafkaEventDispatcher();
+    private static final Logger LOGGER = LoggerFactory.getLogger(ComponentResource.class);
 
     @GET
     @Path("/project/{uuid}")
@@ -133,7 +118,6 @@ public class ComponentResource extends AbstractApiResource {
             @ApiResponse(responseCode = "404", description = "The project could not be found")
     })
     @PermissionRequired(Permissions.Constants.VIEW_PORTFOLIO)
-    @ResourceAccessRequired
     public Response getAllComponents(
             @Parameter(description = "The UUID of the project to retrieve components for", schema = @Schema(type = "string", format = "uuid"), required = true)
             @PathParam("uuid") @ValidUuid String uuid,
@@ -174,7 +158,6 @@ public class ComponentResource extends AbstractApiResource {
             @ApiResponse(responseCode = "404", description = "The component could not be found")
     })
     @PermissionRequired(Permissions.Constants.VIEW_PORTFOLIO)
-    @ResourceAccessRequired
     public Response getComponentByUuid(
             @Parameter(description = "The UUID of the component to retrieve", schema = @Schema(type = "string", format = "uuid"), required = true)
             @PathParam("uuid") @ValidUuid String uuid,
@@ -190,8 +173,11 @@ public class ComponentResource extends AbstractApiResource {
                     final RepositoryType type = RepositoryType.resolve(detachedComponent.getPurl());
                     if (RepositoryType.UNSUPPORTED != type) {
                         if (includeRepositoryMetaData) {
-                            final RepositoryMetaComponent repoMetaComponent = qm.getRepositoryMetaComponent(type, detachedComponent.getPurl().getNamespace(), detachedComponent.getPurl().getName());
-                            detachedComponent.setRepositoryMeta(repoMetaComponent);
+                            final PackageMetadata packageMetadata = withJdbiHandle(
+                                    handle -> new PackageMetadataDao(handle).get(detachedComponent.getPurl()));
+                            if (packageMetadata != null) {
+                                detachedComponent.setRepositoryMeta(RepositoryMetaComponent.of(packageMetadata));
+                            }
                         }
                         if (includeIntegrityMetaData) {
                             detachedComponent.setComponentMetaInformation(withJdbiHandle(
@@ -202,94 +188,6 @@ public class ComponentResource extends AbstractApiResource {
                 return Response.ok(detachedComponent).build();
             } else {
                 return Response.status(Response.Status.NOT_FOUND).entity("The component could not be found.").build();
-            }
-        }
-    }
-
-    @GET
-    @Path("/integritymetadata")
-    @Produces(MediaType.APPLICATION_JSON)
-    @Operation(
-            summary = """
-                    Provides the published date and hashes of the requested version of component,
-                    as received from configured repositories for integrity analysis.""",
-            description = "<p>Requires permission <strong>VIEW_PORTFOLIO</strong></p>"
-    )
-    @ApiResponses(value = {
-            @ApiResponse(
-                    responseCode = "200",
-                    description = "Integrity metadata of the component",
-                    content = @Content(schema = @Schema(implementation = IntegrityMetaComponent.class))
-            ),
-            @ApiResponse(responseCode = "401", description = "Unauthorized"),
-            @ApiResponse(responseCode = "404", description = "The integrity meta information for the specified component cannot be found"),
-            @ApiResponse(responseCode = "400", description = "The package url being queried for is invalid")
-    })
-    @PermissionRequired(Permissions.Constants.VIEW_PORTFOLIO)
-    @ResourceAccessRequired
-    public Response getIntegrityMetaComponent(
-            @Parameter(description = "The package url of the component", required = true)
-            @QueryParam("purl") String purl) {
-        try {
-            final PackageURL packageURL = new PackageURL(purl);
-            try (QueryManager qm = new QueryManager(getAlpineRequest())) {
-                final RepositoryType type = RepositoryType.resolve(packageURL);
-                if (RepositoryType.UNSUPPORTED == type) {
-                    return Response.noContent().build();
-                }
-                final IntegrityMetaComponent result = qm.getIntegrityMetaComponent(packageURL.toString());
-                if (result == null) {
-                    return Response.status(Response.Status.NOT_FOUND).entity("The integrity metadata for the specified component cannot be found.").build();
-                } else {
-                    //todo: future enhancement: provide pass-thru capability for component metadata not already present and being tracked
-                    return Response.ok(result).build();
-                }
-            }
-        } catch (MalformedPackageURLException e) {
-            return Response.status(Response.Status.BAD_REQUEST).build();
-        }
-    }
-
-    @GET
-    @Path("/{uuid}/integritycheckstatus")
-    @Produces(MediaType.APPLICATION_JSON)
-    @Operation(
-            summary = """
-                    Provides the integrity check status of component with provided UUID,
-                    based on the configured repository for integrity analysis.""",
-            description = "<p>Requires permission <strong>VIEW_PORTFOLIO</strong></p>"
-    )
-    @ApiResponses(value = {
-            @ApiResponse(
-                    responseCode = "200",
-                    description = "Integrity metadata of the component",
-                    content = @Content(schema = @Schema(implementation = IntegrityAnalysis.class))
-            ),
-            @ApiResponse(responseCode = "401", description = "Unauthorized"),
-            @ApiResponse(
-                    responseCode = "403",
-                    description = "Access to the requested project is forbidden",
-                    content = @Content(schema = @Schema(implementation = ProblemDetails.class), mediaType = ProblemDetails.MEDIA_TYPE_JSON)),
-            @ApiResponse(responseCode = "404", description = "The integrity analysis information for the specified component cannot be found"),
-    })
-    @PermissionRequired(Permissions.Constants.VIEW_PORTFOLIO)
-    @ResourceAccessRequired
-    public Response getIntegrityStatus(
-            @Parameter(description = "UUID of the component for which integrity status information is needed", schema = @Schema(type = "string", format = "uuid"), required = true)
-            @PathParam("uuid") @ValidUuid String uuid) {
-        try (QueryManager qm = new QueryManager(getAlpineRequest())) {
-            final Component component = qm.getObjectByUuid(Component.class, uuid);
-            if (component == null) {
-                return Response.status(Response.Status.NOT_FOUND).entity("The component could not be found.").build();
-            }
-            requireAccess(qm, component.getProject());
-
-            final IntegrityAnalysis result = qm.getIntegrityAnalysisByComponentUuid(component.getUuid());
-            if (result == null) {
-                return Response.status(Response.Status.NOT_FOUND).entity("The integrity status for the specified component cannot be found.").build();
-            } else {
-                //todo: future enhancement: provide pass-thru capability for component metadata not already present and being tracked
-                return Response.ok(result).build();
             }
         }
     }
@@ -316,7 +214,6 @@ public class ComponentResource extends AbstractApiResource {
                     content = @Content(schema = @Schema(implementation = ProblemDetails.class), mediaType = ProblemDetails.MEDIA_TYPE_JSON))
     })
     @PermissionRequired(Permissions.Constants.VIEW_PORTFOLIO)
-    @ResourceAccessRequired
     public Response getComponentByIdentity(@Parameter(description = "The group of the component")
                                            @QueryParam("group") String group,
                                            @Parameter(description = "The name of the component")
@@ -379,7 +276,6 @@ public class ComponentResource extends AbstractApiResource {
             @ApiResponse(responseCode = "401", description = "Unauthorized")
     })
     @PermissionRequired(Permissions.Constants.VIEW_PORTFOLIO)
-    @ResourceAccessRequired
     public Response getComponentByHash(
             @Parameter(description = "The MD5, SHA-1, SHA-256, SHA-384, SHA-512, SHA3-256, SHA3-384, SHA3-512, BLAKE2b-256, BLAKE2b-384, BLAKE2b-512, or BLAKE3 hash of the component to retrieve", required = true)
             @PathParam("hash") String hash) {
@@ -452,6 +348,12 @@ public class ComponentResource extends AbstractApiResource {
                     return Response.status(Response.Status.NOT_FOUND).entity("The project could not be found.").build();
                 }
                 requireAccess(qm, project);
+                if (project.getCollectionLogic() != null) {
+                    return Response
+                            .status(Response.Status.BAD_REQUEST)
+                            .entity("A collection project cannot contain components.")
+                            .build();
+                }
                 final License resolvedLicense = qm.getLicense(jsonComponent.getLicense());
                 final Component component = new Component();
                 component.setProject(project);
@@ -498,27 +400,6 @@ public class ComponentResource extends AbstractApiResource {
 
                 qm.createComponent(component, true);
 
-                if (component.getPurl() != null) {
-                    ComponentProjection componentProjection =
-                            new ComponentProjection(component.getUuid(), component.getPurlCoordinates().toString(),
-                                    component.isInternal(), component.getPurl());
-                    try {
-                        Handler repoMetaHandler = HandlerFactory.createHandler(componentProjection, qm, kafkaEventDispatcher, FetchMeta.FETCH_META_INTEGRITY_DATA_AND_LATEST_VERSION);
-                        IntegrityMetaComponent integrityMetaComponent = repoMetaHandler.handle();
-                        if (integrityMetaComponent != null && (integrityMetaComponent.getStatus() == PROCESSED || integrityMetaComponent.getStatus() == NOT_AVAILABLE)) {
-                            calculateIntegrityResult(integrityMetaComponent, component, qm);
-                        }
-                    } catch (MalformedPackageURLException ex) {
-                        LOGGER.warn("Unable to process package url %s".formatted(componentProjection.purl()));
-                    }
-                }
-
-                final var vulnAnalysisEvent = new ComponentVulnerabilityAnalysisEvent(UUID.randomUUID(), component, VulnerabilityAnalysisLevel.MANUAL_ANALYSIS, true);
-                try (final Handle jdbiHandle = createLocalJdbi(qm).open()) {
-                    jdbiHandle.attach(VulnerabilityScanDao.class).createVulnerabilityScan(
-                            VulnerabilityScan.TargetType.COMPONENT.name(), component.getUuid(), vulnAnalysisEvent.token(), 1, Instant.now());
-                }
-                kafkaEventDispatcher.dispatchEvent(vulnAnalysisEvent);
                 return Response.status(Response.Status.CREATED).entity(component).build();
             });
         }
@@ -627,28 +508,6 @@ public class ComponentResource extends AbstractApiResource {
 
                     qm.updateComponent(component, true);
 
-                    if (component.getPurl() != null) {
-                        ComponentProjection componentProjection =
-                                new ComponentProjection(component.getUuid(), component.getPurlCoordinates().toString(),
-                                        component.isInternal(), component.getPurl());
-                        try {
-
-                            Handler repoMetaHandler = HandlerFactory.createHandler(componentProjection, qm, kafkaEventDispatcher, FetchMeta.FETCH_META_INTEGRITY_DATA_AND_LATEST_VERSION);
-                            IntegrityMetaComponent integrityMetaComponent = repoMetaHandler.handle();
-                            if (integrityMetaComponent != null && (integrityMetaComponent.getStatus() == PROCESSED || integrityMetaComponent.getStatus() == NOT_AVAILABLE)) {
-                                calculateIntegrityResult(integrityMetaComponent, component, qm);
-                            }
-                        } catch (MalformedPackageURLException ex) {
-                            LOGGER.warn("Unable to determine package url type for this purl %s".formatted(component.getPurl().getType()), ex);
-                        }
-                    }
-
-                    final var vulnAnalysisEvent = new ComponentVulnerabilityAnalysisEvent(UUID.randomUUID(), component, VulnerabilityAnalysisLevel.MANUAL_ANALYSIS, false);
-                    try (final Handle jdbiHandle = createLocalJdbi(qm).open()) {
-                        jdbiHandle.attach(VulnerabilityScanDao.class).createVulnerabilityScan(
-                                VulnerabilityScan.TargetType.COMPONENT.name(), component.getUuid(), vulnAnalysisEvent.token(), 1, Instant.now());
-                    }
-                    kafkaEventDispatcher.dispatchEvent(vulnAnalysisEvent);
                     return Response.ok(component).build();
                 } else {
                     return Response.status(Response.Status.NOT_FOUND).entity("The UUID of the component could not be found.").build();
@@ -733,7 +592,6 @@ public class ComponentResource extends AbstractApiResource {
             @ApiResponse(responseCode = "404", description = "- The UUID of the project could not be found\n- The UUID of the component could not be found")
     })
     @PermissionRequired(Permissions.Constants.VIEW_PORTFOLIO)
-    @ResourceAccessRequired
     public Response getDependencyGraphForComponent(
             @Parameter(description = "The UUID of the project to get the expanded dependency graph for", schema = @Schema(type = "string", format = "uuid"), required = true)
             @PathParam("projectUuid") @ValidUuid String projectUuid,
@@ -784,7 +642,6 @@ public class ComponentResource extends AbstractApiResource {
                     content = @Content(schema = @Schema(implementation = ProblemDetails.class), mediaType = ProblemDetails.MEDIA_TYPE_JSON)),
     })
     @PermissionRequired(Permissions.Constants.VIEW_PORTFOLIO)
-    @ResourceAccessRequired
     public Response getOccurrences(@PathParam("uuid") final UUID uuid) {
         final List<ComponentOccurrence> occurrences = withJdbiHandle(getAlpineRequest(), handle -> {
             requireComponentAccess(handle, uuid);

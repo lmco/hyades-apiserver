@@ -22,12 +22,9 @@
     <configuration>
         <enabled>true</enabled>
         <hashAlgorithm>XX</hashAlgorithm>
-        <attachedOutputs>
-            <dirNames>
-                <!-- Required by Jetty plugin. -->
-                <dirName>classes</dirName>
-            </dirNames>
-        </attachedOutputs>
+        <local>
+            <maxBuildsCached>3</maxBuildsCached>
+        </local>
     </configuration>
     <input>
         <global>
@@ -40,26 +37,18 @@
     <executionControl>
         <runAlways>
             <executions>
-                <execution artifactId="maven-antrun-plugin">
+                <execution artifactId="maven-dependency-plugin">
                     <execIds>
-                        <!--
-                          The build cache only restores the API server WAR file,
-                          but the JAR file is required for container image builds.
-                        -->
-                        <execId>rename-war-file</execId>
+                        <execId>copy-dependencies</execId>
+                    </execIds>
+                </execution>
+                <execution artifactId="jacoco-maven-plugin">
+                    <execIds>
+                        <execId>report-aggregate</execId>
                     </execIds>
                 </execution>
             </executions>
             <goalsLists>
-                <!--
-                  https://github.com/ascopes/protobuf-maven-plugin/issues/472
-                  https://issues.apache.org/jira/browse/MBUILDCACHE-115
-                -->
-                <goalsList artifactId="protobuf-maven-plugin">
-                    <goals>
-                        <goal>generate</goal>
-                    </goals>
-                </goalsList>
                 <goalsList artifactId="maven-install-plugin">
                     <goals>
                         <goal>install</goal>

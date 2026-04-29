@@ -20,9 +20,9 @@ package org.dependencytrack.persistence.jdbi.mapping;
 
 import com.fasterxml.jackson.core.JacksonException;
 import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.protobuf.Timestamp;
 import com.google.protobuf.util.Timestamps;
+import org.dependencytrack.common.Mappers;
 import org.jdbi.v3.core.result.UnableToProduceResultException;
 import org.postgresql.util.PSQLException;
 import org.postgresql.util.PSQLState;
@@ -31,8 +31,6 @@ import java.sql.Array;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Types;
-import java.time.ZoneOffset;
-import java.time.ZonedDateTime;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Date;
@@ -42,8 +40,6 @@ import java.util.function.Consumer;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 public class RowMapperUtil {
-
-    public static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
     private RowMapperUtil() {
     }
@@ -109,11 +105,6 @@ public class RowMapperUtil {
         return timestamp != null ? Timestamps.fromDate(timestamp) : null;
     }
 
-    public static ZonedDateTime nullableZonedDateTime(final ResultSet rs, final String columnName) throws SQLException {
-        final Date timestamp = rs.getTimestamp(columnName);
-        return timestamp != null ? ZonedDateTime.ofInstant(timestamp.toInstant(), ZoneOffset.UTC) : null;
-    }
-
     public static List<String> stringArray(final ResultSet rs, final String columnName) throws SQLException {
         final Array array = rs.getArray(columnName);
         if (array == null) {
@@ -144,7 +135,7 @@ public class RowMapperUtil {
         }
 
         try {
-            return OBJECT_MAPPER.readValue(jsonString, typeReference);
+            return Mappers.jsonMapper().readValue(jsonString, typeReference);
         } catch (JacksonException e) {
             throw new UnableToProduceResultException(e);
         }

@@ -24,11 +24,12 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import javax.jdo.JDOHelper;
 import javax.jdo.PersistenceManager;
 import javax.jdo.PersistenceManagerFactory;
+import javax.jdo.Query;
 import java.net.URL;
 import java.util.Map;
 
@@ -37,29 +38,31 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 public abstract class AbstractTest {
 
-    private static PostgreSQLContainer<?> postgresContainer;
-    private PersistenceManagerFactory pmf;
+    private static PostgreSQLContainer postgresContainer;
+    private static PersistenceManagerFactory pmf;
     protected PersistenceManager pm;
 
     @BeforeAll
     static void beforeAll() {
-        postgresContainer = new PostgreSQLContainer<>("postgres:13-alpine");
+        postgresContainer = new PostgreSQLContainer("postgres:14-alpine")
+                .withCommand("postgres", "-c", "fsync=off", "-c", "full_page_writes=off")
+                .withTmpFs(Map.of("/var/lib/postgresql/data", "rw"));
         postgresContainer.start();
+
+        pmf = createPmf(postgresContainer);
     }
 
     @BeforeEach
     void beforeEach() {
-        pmf = createPmf(postgresContainer);
         pm = pmf.getPersistenceManager();
     }
 
     @AfterEach
     void afterEach() {
+        pm.newQuery(Query.SQL, "TRUNCATE TABLE \"PERSON\"").execute();
+
         if (pm != null) {
             pm.close();
-        }
-        if (pmf != null) {
-            pmf.close();
         }
     }
 
@@ -68,9 +71,12 @@ public abstract class AbstractTest {
         if (postgresContainer != null) {
             postgresContainer.stop();
         }
+        if (pmf != null) {
+            pmf.close();
+        }
     }
 
-    private static PersistenceManagerFactory createPmf(final PostgreSQLContainer<?> postgresContainer) {
+    private static PersistenceManagerFactory createPmf(final PostgreSQLContainer postgresContainer) {
         final URL schemaUrl = JsonbContainsMethod.class.getResource("/schema.sql");
         assertThat(schemaUrl).isNotNull();
 
@@ -82,7 +88,8 @@ public abstract class AbstractTest {
                         entry(PropertyNames.PROPERTY_CONNECTION_URL, postgresContainer.getJdbcUrl()),
                         entry(PropertyNames.PROPERTY_CONNECTION_DRIVER_NAME, postgresContainer.getDriverClassName()),
                         entry(PropertyNames.PROPERTY_CONNECTION_USER_NAME, postgresContainer.getUsername()),
-                        entry(PropertyNames.PROPERTY_CONNECTION_PASSWORD, postgresContainer.getPassword())),
+                        entry(PropertyNames.PROPERTY_CONNECTION_PASSWORD, postgresContainer.getPassword()),
+                        entry(PropertyNames.PROPERTY_QUERY_SQL_ALLOWALL, "true")),
                 "test");
     }
 

@@ -23,172 +23,173 @@ import alpine.model.ManagedUser;
 import alpine.model.OidcUser;
 import alpine.model.Team;
 import alpine.model.User;
-import alpine.server.auth.JsonWebToken;
+import alpine.model.UserSession;
+import alpine.server.auth.SessionTokenService;
 import alpine.server.filters.ApiFilter;
 import alpine.server.filters.AuthenticationFeature;
-import org.dependencytrack.JerseyTestRule;
-import org.dependencytrack.ResourceTest;
-import org.dependencytrack.event.kafka.KafkaTopics;
-import org.dependencytrack.model.IdentifiableObject;
-import org.dependencytrack.model.Project;
-import org.dependencytrack.model.Role;
-import org.dependencytrack.notification.NotificationConstants;
-import org.dependencytrack.resources.v1.vo.ModifyUserProjectRoleRequest;
-import org.glassfish.jersey.client.ClientProperties;
-import org.glassfish.jersey.server.ResourceConfig;
-import org.junit.Assert;
-import org.junit.Before;
-import org.junit.ClassRule;
-import org.junit.Test;
-
+import alpine.server.filters.AuthorizationFeature;
 import jakarta.json.Json;
 import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
 import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import java.time.Duration;
+import org.dependencytrack.JerseyTestExtension;
+import org.dependencytrack.ResourceTest;
+import org.dependencytrack.auth.Permissions;
+import org.dependencytrack.model.IdentifiableObject;
+import org.dependencytrack.notification.NotificationScope;
+import org.glassfish.jersey.client.ClientProperties;
+import org.glassfish.jersey.server.ResourceConfig;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+
 import java.util.Collections;
+import java.util.Date;
 import java.util.List;
 import java.util.UUID;
 
-import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
-import static org.dependencytrack.assertion.Assertions.assertConditionWithTimeout;
-import static org.dependencytrack.proto.notification.v1.Group.GROUP_USER_CREATED;
-import static org.dependencytrack.proto.notification.v1.Group.GROUP_USER_DELETED;
-import static org.dependencytrack.proto.notification.v1.Level.LEVEL_INFORMATIONAL;
-import static org.dependencytrack.proto.notification.v1.Scope.SCOPE_SYSTEM;
-import static org.dependencytrack.util.KafkaTestUtil.deserializeValue;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.dependencytrack.notification.NotificationTestUtil.createCatchAllNotificationRule;
+import static org.dependencytrack.notification.proto.v1.Group.GROUP_USER_CREATED;
+import static org.dependencytrack.notification.proto.v1.Group.GROUP_USER_DELETED;
+import static org.dependencytrack.notification.proto.v1.Level.LEVEL_INFORMATIONAL;
+import static org.dependencytrack.notification.proto.v1.Scope.SCOPE_SYSTEM;
 
-public class UserResourceAuthenticatedTest extends ResourceTest {
+class UserResourceAuthenticatedTest extends ResourceTest {
 
-    @ClassRule
-    public static JerseyTestRule jersey = new JerseyTestRule(
+    @RegisterExtension
+    static JerseyTestExtension jersey = new JerseyTestExtension(
             new ResourceConfig(UserResource.class)
                     .register(ApiFilter.class)
-                    .register(AuthenticationFeature.class));
+                    .register(AuthenticationFeature.class)
+                    .register(AuthorizationFeature.class));
 
     private ManagedUser testUser;
-    private String jwt;
+    private String sessionToken;
 
-    @Before
-    @Override
-    public void before() throws Exception {
-        super.before();
+    @BeforeEach
+    void beforeEach() {
         testUser = qm.createManagedUser("testuser", TEST_USER_PASSWORD_HASH);
-        this.jwt = new JsonWebToken().createToken(testUser);
+        this.sessionToken = new SessionTokenService().createSession(testUser.getId());
         qm.addUserToTeam(testUser, team);
     }
 
     @Test
-    public void getManagedUsersTest() {
+    void getManagedUsersTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_READ);
+
         for (int i=0; i<1000; i++) {
             qm.createManagedUser("managed-user-" + i, TEST_USER_PASSWORD_HASH);
         }
         Response response = jersey.target(V1_USER + "/managed").request()
                 .header(X_API_KEY, apiKey)
                 .get(Response.class);
-        Assert.assertEquals(200, response.getStatus(), 0);
-        Assert.assertEquals(String.valueOf(1001), response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(200, response.getStatus(), 0);
+        Assertions.assertEquals(String.valueOf(1001), response.getHeaderString(TOTAL_COUNT_HEADER));
         JsonArray json = parseJsonArray(response);
-        Assert.assertNotNull(json);
-        Assert.assertEquals(1001, json.size()); // There's already a built-in managed user in ResourceTest
-        Assert.assertEquals("managed-user-0", json.getJsonObject(0).getString("username"));
+        Assertions.assertNotNull(json);
+        Assertions.assertEquals(1001, json.size()); // There's already a built-in managed user in ResourceTest
+        Assertions.assertEquals("managed-user-0", json.getJsonObject(0).getString("username"));
     }
 
     @Test
-    public void getLdapUsersTest() {
+    void getLdapUsersTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_READ);
+
         for (int i=0; i<1000; i++) {
             qm.createLdapUser("ldap-user-" + i);
         }
         Response response = jersey.target(V1_USER + "/ldap").request()
                 .header(X_API_KEY, apiKey)
                 .get(Response.class);
-        Assert.assertEquals(200, response.getStatus(), 0);
-        Assert.assertEquals(String.valueOf(1000), response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(200, response.getStatus(), 0);
+        Assertions.assertEquals(String.valueOf(1000), response.getHeaderString(TOTAL_COUNT_HEADER));
         JsonArray json = parseJsonArray(response);
-        Assert.assertNotNull(json);
-        Assert.assertEquals(1000, json.size());
-        Assert.assertEquals("ldap-user-0", json.getJsonObject(0).getString("username"));
+        Assertions.assertNotNull(json);
+        Assertions.assertEquals(1000, json.size());
+        Assertions.assertEquals("ldap-user-0", json.getJsonObject(0).getString("username"));
     }
 
     @Test
-    public void getSelfTest() {
+    void getSelfTest() {
         Response response = jersey.target(V1_USER + "/self").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .get(Response.class);
-        Assert.assertEquals(200, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(200, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         JsonObject json = parseJsonObject(response);
-        Assert.assertNotNull(json);
-        Assert.assertEquals("testuser", json.getString("username"));
+        Assertions.assertNotNull(json);
+        Assertions.assertEquals("testuser", json.getString("username"));
     }
 
     @Test
-    public void getSelfNonUserTest() {
+    void getSelfNonUserTest() {
         Response response = jersey.target(V1_USER + "/self").request()
                 .header(X_API_KEY, apiKey)
                 .get(Response.class);
-        Assert.assertEquals(401, response.getStatus(), 0);
+        Assertions.assertEquals(401, response.getStatus(), 0);
     }
 
     @Test
-    public void updateSelfTest() {
+    void updateSelfTest() {
         ManagedUser user = new ManagedUser();
         user.setUsername(testUser.getUsername());
         user.setFullname("Captain BlackBeard");
         user.setEmail("blackbeard@example.com");
         Response response = jersey.target(V1_USER + "/self").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .post(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(200, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(200, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         JsonObject json = parseJsonObject(response);
-        Assert.assertNotNull(json);
-        Assert.assertEquals("Captain BlackBeard", json.getString("fullname"));
-        Assert.assertEquals("blackbeard@example.com", json.getString("email"));
+        Assertions.assertNotNull(json);
+        Assertions.assertEquals("Captain BlackBeard", json.getString("fullname"));
+        Assertions.assertEquals("blackbeard@example.com", json.getString("email"));
     }
 
     @Test
-    public void updateSelfInvalidFullnameTest() {
+    void updateSelfInvalidFullnameTest() {
         ManagedUser user = new ManagedUser();
         user.setUsername(testUser.getUsername());
         user.setFullname("");
         user.setEmail("blackbeard@example.com");
         Response response = jersey.target(V1_USER + "/self").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .post(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(400, response.getStatus(), 0);
+        Assertions.assertEquals(400, response.getStatus(), 0);
         String body = getPlainTextBody(response);
-        Assert.assertEquals("Full name is required.", body);
+        Assertions.assertEquals("Full name is required.", body);
     }
 
     @Test
-    public void updateSelfInvalidEmailTest() {
+    void updateSelfInvalidEmailTest() {
         ManagedUser user = new ManagedUser();
         user.setUsername(testUser.getUsername());
         user.setFullname("Captain BlackBeard");
         user.setEmail("");
         Response response = jersey.target(V1_USER + "/self").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .post(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(400, response.getStatus(), 0);
+        Assertions.assertEquals(400, response.getStatus(), 0);
         String body = getPlainTextBody(response);
-        Assert.assertEquals("Email address is required.", body);
+        Assertions.assertEquals("Email address is required.", body);
     }
 
     @Test
-    public void updateSelfUnauthorizedTest() {
+    void updateSelfUnauthorizedTest() {
         ManagedUser user = new ManagedUser();
         user.setUsername(testUser.getUsername());
         Response response = jersey.target(V1_USER + "/self").request()
                 .header(X_API_KEY, apiKey)
                 .post(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(401, response.getStatus(), 0);
+        Assertions.assertEquals(401, response.getStatus(), 0);
     }
 
     @Test
-    public void updateSelfPasswordsTest() {
+    void updateSelfPasswordsTest() {
         ManagedUser user = new ManagedUser();
         user.setUsername(testUser.getUsername());
         user.setFullname("Captain BlackBeard");
@@ -196,18 +197,18 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         user.setNewPassword("newPassword");
         user.setConfirmPassword("newPassword");
         Response response = jersey.target(V1_USER + "/self").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .post(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(200, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(200, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         JsonObject json = parseJsonObject(response);
-        Assert.assertNotNull(json);
-        Assert.assertEquals("Captain BlackBeard", json.getString("fullname"));
-        Assert.assertEquals("blackbeard@example.com", json.getString("email"));
+        Assertions.assertNotNull(json);
+        Assertions.assertEquals("Captain BlackBeard", json.getString("fullname"));
+        Assertions.assertEquals("blackbeard@example.com", json.getString("email"));
     }
 
     @Test
-    public void updateSelfPasswordMismatchTest() {
+    void updateSelfPasswordMismatchTest() {
         ManagedUser user = new ManagedUser();
         user.setUsername(testUser.getUsername());
         user.setFullname("Captain BlackBeard");
@@ -215,64 +216,74 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         user.setNewPassword("newPassword");
         user.setConfirmPassword("blah");
         Response response = jersey.target(V1_USER + "/self").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .post(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(400, response.getStatus(), 0);
+        Assertions.assertEquals(400, response.getStatus(), 0);
         String body = getPlainTextBody(response);
-        Assert.assertEquals("Passwords do not match.", body);
+        Assertions.assertEquals("Passwords do not match.", body);
     }
 
     @Test
-    public void createLdapUserTest() throws InterruptedException {
+    void createLdapUserTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_CREATE);
+
+        createCatchAllNotificationRule(qm, NotificationScope.SYSTEM);
+
         LdapUser user = new LdapUser();
         user.setUsername("blackbeard");
         Response response = jersey.target(V1_USER + "/ldap").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .put(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(201, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(201, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         JsonObject json = parseJsonObject(response);
-        Assert.assertNotNull(json);
-        Assert.assertEquals("blackbeard", json.getString("username"));
+        Assertions.assertNotNull(json);
+        Assertions.assertEquals("blackbeard", json.getString("username"));
 
-        assertConditionWithTimeout(() -> kafkaMockProducer.history().size() == 1, Duration.ofSeconds(5));
-        final org.dependencytrack.proto.notification.v1.Notification userNotification = deserializeValue(KafkaTopics.NOTIFICATION_USER, kafkaMockProducer.history().get(0));
-        assertThat(userNotification).isNotNull();
-        assertThat(userNotification.getScope()).isEqualTo(SCOPE_SYSTEM);
-        assertThat(userNotification.getGroup()).isEqualTo(GROUP_USER_CREATED);
-        assertThat(userNotification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
-        assertThat(userNotification.getTitle()).isEqualTo(NotificationConstants.Title.USER_CREATED);
-        assertThat(userNotification.getContent()).isEqualTo("LDAP user created");
+        assertThat(qm.getNotificationOutbox()).satisfiesExactly(notification -> {
+            assertThat(notification.getScope()).isEqualTo(SCOPE_SYSTEM);
+            assertThat(notification.getGroup()).isEqualTo(GROUP_USER_CREATED);
+            assertThat(notification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
+            assertThat(notification.getTitle()).isEqualTo("User Created");
+            assertThat(notification.getContent()).isEqualTo("User blackbeard was created");
+        });
     }
 
     @Test
-    public void createLdapUserInvalidUsernameTest() throws InterruptedException {
+    void createLdapUserInvalidUsernameTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_CREATE);
+
         LdapUser user = new LdapUser();
         user.setUsername("");
         Response response = jersey.target(V1_USER + "/ldap").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .put(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(400, response.getStatus(), 0);
+        Assertions.assertEquals(400, response.getStatus(), 0);
         String body = getPlainTextBody(response);
-        Assert.assertEquals("Username cannot be null or blank.", body);
-        assertConditionWithTimeout(() -> kafkaMockProducer.history().size() == 0, Duration.ofSeconds(5));
+        Assertions.assertEquals("Username cannot be null or blank.", body);
     }
 
     @Test
-    public void createLdapUserDuplicateUsernameTest() {
+    void createLdapUserDuplicateUsernameTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_CREATE);
+
         qm.createLdapUser("blackbeard");
         LdapUser user = new LdapUser();
         user.setUsername("blackbeard");
         Response response = jersey.target(V1_USER + "/ldap").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .put(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(409, response.getStatus(), 0);
+        Assertions.assertEquals(409, response.getStatus(), 0);
         String body = getPlainTextBody(response);
-        Assert.assertEquals("A user with the same username already exists. Cannot create new user.", body);
+        Assertions.assertEquals("A user with the same username already exists. Cannot create new user.", body);
     }
 
     @Test
-    public void deleteLdapUserTest() throws InterruptedException {
+    void deleteLdapUserTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_DELETE);
+
+        createCatchAllNotificationRule(qm, NotificationScope.SYSTEM);
+
         qm.createLdapUser("blackbeard");
         LdapUser user = new LdapUser();
         user.setUsername("blackbeard");
@@ -281,20 +292,23 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
                 .property(ClientProperties.SUPPRESS_HTTP_COMPLIANCE_VALIDATION, true) // HACK
                 .method("DELETE", Entity.entity(user, MediaType.APPLICATION_JSON)); // HACK
         // Hack: Workaround to https://github.com/eclipse-ee4j/jersey/issues/3798
-        Assert.assertEquals(204, response.getStatus(), 0);
+        Assertions.assertEquals(204, response.getStatus(), 0);
 
-        assertConditionWithTimeout(() -> kafkaMockProducer.history().size() == 1, Duration.ofSeconds(5));
-        final org.dependencytrack.proto.notification.v1.Notification userNotification = deserializeValue(KafkaTopics.NOTIFICATION_USER, kafkaMockProducer.history().get(0));
-        assertThat(userNotification).isNotNull();
-        assertThat(userNotification.getScope()).isEqualTo(SCOPE_SYSTEM);
-        assertThat(userNotification.getGroup()).isEqualTo(GROUP_USER_DELETED);
-        assertThat(userNotification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
-        assertThat(userNotification.getTitle()).isEqualTo(NotificationConstants.Title.USER_DELETED);
-        assertThat(userNotification.getContent()).isEqualTo("LDAP user deleted");
+        assertThat(qm.getNotificationOutbox()).satisfiesExactly(notification -> {
+            assertThat(notification.getScope()).isEqualTo(SCOPE_SYSTEM);
+            assertThat(notification.getGroup()).isEqualTo(GROUP_USER_DELETED);
+            assertThat(notification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
+            assertThat(notification.getTitle()).isEqualTo("User Deleted");
+            assertThat(notification.getContent()).isEqualTo("User blackbeard was deleted");
+        });
     }
 
     @Test
-    public void createManagedUserTest() throws InterruptedException {
+    void createManagedUserTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_CREATE);
+
+        createCatchAllNotificationRule(qm, NotificationScope.SYSTEM);
+
         ManagedUser user = new ManagedUser();
         user.setFullname("Captain BlackBeard");
         user.setEmail("blackbeard@example.com");
@@ -302,28 +316,29 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         user.setNewPassword("password");
         user.setConfirmPassword("password");
         Response response = jersey.target(V1_USER + "/managed").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .put(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(201, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(201, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         JsonObject json = parseJsonObject(response);
-        Assert.assertNotNull(json);
-        Assert.assertEquals("Captain BlackBeard", json.getString("fullname"));
-        Assert.assertEquals("blackbeard@example.com", json.getString("email"));
-        Assert.assertEquals("blackbeard", json.getString("username"));
+        Assertions.assertNotNull(json);
+        Assertions.assertEquals("Captain BlackBeard", json.getString("fullname"));
+        Assertions.assertEquals("blackbeard@example.com", json.getString("email"));
+        Assertions.assertEquals("blackbeard", json.getString("username"));
 
-        assertConditionWithTimeout(() -> kafkaMockProducer.history().size() == 1, Duration.ofSeconds(5));
-        final org.dependencytrack.proto.notification.v1.Notification userNotification = deserializeValue(KafkaTopics.NOTIFICATION_USER, kafkaMockProducer.history().get(0));
-        assertThat(userNotification).isNotNull();
-        assertThat(userNotification.getScope()).isEqualTo(SCOPE_SYSTEM);
-        assertThat(userNotification.getGroup()).isEqualTo(GROUP_USER_CREATED);
-        assertThat(userNotification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
-        assertThat(userNotification.getTitle()).isEqualTo(NotificationConstants.Title.USER_CREATED);
-        assertThat(userNotification.getContent()).isEqualTo("Managed user created");
+        assertThat(qm.getNotificationOutbox()).satisfiesExactly(notification -> {
+            assertThat(notification.getScope()).isEqualTo(SCOPE_SYSTEM);
+            assertThat(notification.getGroup()).isEqualTo(GROUP_USER_CREATED);
+            assertThat(notification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
+            assertThat(notification.getTitle()).isEqualTo("User Created");
+            assertThat(notification.getContent()).isEqualTo("User blackbeard was created");
+        });
     }
 
     @Test
-    public void createManagedUserInvalidUsernameTest() {
+    void createManagedUserInvalidUsernameTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_CREATE);
+
         ManagedUser user = new ManagedUser();
         user.setFullname("Captain BlackBeard");
         user.setEmail("blackbeard@example.com");
@@ -331,16 +346,18 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         user.setNewPassword("password");
         user.setConfirmPassword("password");
         Response response = jersey.target(V1_USER + "/managed").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .put(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(400, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(400, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         String body = getPlainTextBody(response);
-        Assert.assertEquals("Username cannot be null or blank.", body);
+        Assertions.assertEquals("Username cannot be null or blank.", body);
     }
 
     @Test
-    public void createManagedUserInvalidFullnameTest() {
+    void createManagedUserInvalidFullnameTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_CREATE);
+
         ManagedUser user = new ManagedUser();
         user.setFullname("");
         user.setEmail("blackbeard@example.com");
@@ -348,16 +365,18 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         user.setNewPassword("password");
         user.setConfirmPassword("password");
         Response response = jersey.target(V1_USER + "/managed").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .put(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(400, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(400, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         String body = getPlainTextBody(response);
-        Assert.assertEquals("The users full name is missing.", body);
+        Assertions.assertEquals("The users full name is missing.", body);
     }
 
     @Test
-    public void createManagedUserInvalidEmailTest() {
+    void createManagedUserInvalidEmailTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_CREATE);
+
         ManagedUser user = new ManagedUser();
         user.setFullname("Captain BlackBeard");
         user.setEmail("");
@@ -365,16 +384,18 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         user.setNewPassword("password");
         user.setConfirmPassword("password");
         Response response = jersey.target(V1_USER + "/managed").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .put(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(400, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(400, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         String body = getPlainTextBody(response);
-        Assert.assertEquals("The users email address is missing.", body);
+        Assertions.assertEquals("The users email address is missing.", body);
     }
 
     @Test
-    public void createManagedUserInvalidPasswordTest() {
+    void createManagedUserInvalidPasswordTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_CREATE);
+
         ManagedUser user = new ManagedUser();
         user.setFullname("Captain BlackBeard");
         user.setEmail("blackbeard@example.com");
@@ -382,16 +403,18 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         user.setNewPassword("");
         user.setConfirmPassword("password");
         Response response = jersey.target(V1_USER + "/managed").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .put(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(400, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(400, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         String body = getPlainTextBody(response);
-        Assert.assertEquals("A password must be set.", body);
+        Assertions.assertEquals("A password must be set.", body);
     }
 
     @Test
-    public void createManagedUserPasswordMismatchTest() {
+    void createManagedUserPasswordMismatchTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_CREATE);
+
         ManagedUser user = new ManagedUser();
         user.setFullname("Captain BlackBeard");
         user.setEmail("blackbeard@example.com");
@@ -399,16 +422,18 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         user.setNewPassword("password");
         user.setConfirmPassword("blah");
         Response response = jersey.target(V1_USER + "/managed").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .put(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(400, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(400, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         String body = getPlainTextBody(response);
-        Assert.assertEquals("The passwords do not match.", body);
+        Assertions.assertEquals("The passwords do not match.", body);
     }
 
     @Test
-    public void createManagedUserDuplicateUsernameTest() {
+    void createManagedUserDuplicateUsernameTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_CREATE);
+
         qm.createManagedUser("blackbeard", TEST_USER_PASSWORD_HASH);
         ManagedUser user = new ManagedUser();
         user.setFullname("Captain BlackBeard");
@@ -417,16 +442,18 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         user.setNewPassword("password");
         user.setConfirmPassword("password");
         Response response = jersey.target(V1_USER + "/managed").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .put(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(409, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(409, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         String body = getPlainTextBody(response);
-        Assert.assertEquals("A user with the same username already exists. Cannot create new user.", body);
+        Assertions.assertEquals("A user with the same username already exists. Cannot create new user.", body);
     }
 
     @Test
-    public void updateManagedUserTest() {
+    void updateManagedUserTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_UPDATE);
+
         qm.createManagedUser("blackbeard", "Captain BlackBeard", "blackbeard@example.com", TEST_USER_PASSWORD_HASH, false, false, false);
         ManagedUser user = new ManagedUser();
         user.setUsername("blackbeard");
@@ -436,21 +463,23 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         user.setNonExpiryPassword(true);
         user.setSuspended(true);
         Response response = jersey.target(V1_USER + "/managed").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .post(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(200, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(200, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         JsonObject json = parseJsonObject(response);
-        Assert.assertNotNull(json);
-        Assert.assertEquals("Dr BlackBeard, Ph.D.", json.getString("fullname"));
-        Assert.assertEquals("blackbeard@example.com", json.getString("email"));
-        Assert.assertTrue(json.getBoolean("forcePasswordChange"));
-        Assert.assertTrue(json.getBoolean("nonExpiryPassword"));
-        Assert.assertTrue(json.getBoolean("suspended"));
+        Assertions.assertNotNull(json);
+        Assertions.assertEquals("Dr BlackBeard, Ph.D.", json.getString("fullname"));
+        Assertions.assertEquals("blackbeard@example.com", json.getString("email"));
+        Assertions.assertTrue(json.getBoolean("forcePasswordChange"));
+        Assertions.assertTrue(json.getBoolean("nonExpiryPassword"));
+        Assertions.assertTrue(json.getBoolean("suspended"));
     }
 
     @Test
-    public void updateManagedUserInvalidFullnameTest() {
+    void updateManagedUserInvalidFullnameTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_UPDATE);
+
         qm.createManagedUser("blackbeard", "Captain BlackBeard", "blackbeard@example.com", TEST_USER_PASSWORD_HASH, false, false, false);
         ManagedUser user = new ManagedUser();
         user.setUsername("blackbeard");
@@ -460,16 +489,18 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         user.setNonExpiryPassword(true);
         user.setSuspended(true);
         Response response = jersey.target(V1_USER + "/managed").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .post(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(400, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(400, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         String body = getPlainTextBody(response);
-        Assert.assertEquals("The users full name is missing.", body);
+        Assertions.assertEquals("The users full name is missing.", body);
     }
 
     @Test
-    public void updateManagedUserInvalidEmailTest() {
+    void updateManagedUserInvalidEmailTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_UPDATE);
+
         qm.createManagedUser("blackbeard", "Captain BlackBeard", "blackbeard@example.com", TEST_USER_PASSWORD_HASH, false, false, false);
         ManagedUser user = new ManagedUser();
         user.setUsername("blackbeard");
@@ -479,16 +510,18 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         user.setNonExpiryPassword(true);
         user.setSuspended(true);
         Response response = jersey.target(V1_USER + "/managed").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .post(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(400, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(400, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         String body = getPlainTextBody(response);
-        Assert.assertEquals("The users email address is missing.", body);
+        Assertions.assertEquals("The users email address is missing.", body);
     }
 
     @Test
-    public void updateManagedUserInvalidUsernameTest() {
+    void updateManagedUserInvalidUsernameTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_UPDATE);
+
         qm.createManagedUser("blackbeard", "Captain BlackBeard", "blackbeard@example.com", TEST_USER_PASSWORD_HASH, false, false, false);
         ManagedUser user = new ManagedUser();
         user.setUsername("");
@@ -498,16 +531,20 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         user.setNonExpiryPassword(true);
         user.setSuspended(true);
         Response response = jersey.target(V1_USER + "/managed").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .post(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(404, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(404, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         String body = getPlainTextBody(response);
-        Assert.assertEquals("The user could not be found.", body);
+        Assertions.assertEquals("The user could not be found.", body);
     }
 
     @Test
-    public void deleteManagedUserTest() throws InterruptedException {
+    void deleteManagedUserTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_DELETE);
+
+        createCatchAllNotificationRule(qm, NotificationScope.SYSTEM);
+
         qm.createManagedUser("blackbeard", "Captain BlackBeard", "blackbeard@example.com", TEST_USER_PASSWORD_HASH, false, false, false);
         ManagedUser user = new ManagedUser();
         user.setUsername("blackbeard");
@@ -516,56 +553,62 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
                 .property(ClientProperties.SUPPRESS_HTTP_COMPLIANCE_VALIDATION, true) // HACK
                 .method("DELETE", Entity.entity(user, MediaType.APPLICATION_JSON)); // HACK
         // Hack: Workaround to https://github.com/eclipse-ee4j/jersey/issues/3798
-        Assert.assertEquals(204, response.getStatus(), 0);
+        Assertions.assertEquals(204, response.getStatus(), 0);
 
-        assertConditionWithTimeout(() -> kafkaMockProducer.history().size() == 1, Duration.ofSeconds(5));
-        final org.dependencytrack.proto.notification.v1.Notification userNotification = deserializeValue(KafkaTopics.NOTIFICATION_USER, kafkaMockProducer.history().get(0));
-        assertThat(userNotification).isNotNull();
-        assertThat(userNotification.getScope()).isEqualTo(SCOPE_SYSTEM);
-        assertThat(userNotification.getGroup()).isEqualTo(GROUP_USER_DELETED);
-        assertThat(userNotification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
-        assertThat(userNotification.getTitle()).isEqualTo(NotificationConstants.Title.USER_DELETED);
-        assertThat(userNotification.getContent()).isEqualTo("Managed user deleted");
+        assertThat(qm.getNotificationOutbox()).satisfiesExactly(notification -> {
+            assertThat(notification.getScope()).isEqualTo(SCOPE_SYSTEM);
+            assertThat(notification.getGroup()).isEqualTo(GROUP_USER_DELETED);
+            assertThat(notification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
+            assertThat(notification.getTitle()).isEqualTo("User Deleted");
+            assertThat(notification.getContent()).isEqualTo("User blackbeard was deleted");
+        });
     }
 
     @Test
-    public void createOidcUserTest() throws InterruptedException {
+    void createOidcUserTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_CREATE);
+
+        createCatchAllNotificationRule(qm, NotificationScope.SYSTEM);
+
         final OidcUser user = new OidcUser();
         user.setUsername("blackbeard");
         Response response = jersey.target(V1_USER + "/oidc").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .put(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(201, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(201, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         JsonObject json = parseJsonObject(response);
-        Assert.assertNotNull(json);
-        Assert.assertEquals("blackbeard", json.getString("username"));
+        Assertions.assertNotNull(json);
+        Assertions.assertEquals("blackbeard", json.getString("username"));
 
-        assertConditionWithTimeout(() -> kafkaMockProducer.history().size() == 1, Duration.ofSeconds(5));
-        final org.dependencytrack.proto.notification.v1.Notification userNotification = deserializeValue(KafkaTopics.NOTIFICATION_USER, kafkaMockProducer.history().get(0));
-        assertThat(userNotification).isNotNull();
-        assertThat(userNotification.getScope()).isEqualTo(SCOPE_SYSTEM);
-        assertThat(userNotification.getGroup()).isEqualTo(GROUP_USER_CREATED);
-        assertThat(userNotification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
-        assertThat(userNotification.getTitle()).isEqualTo(NotificationConstants.Title.USER_CREATED);
-        assertThat(userNotification.getContent()).isEqualTo("OpenID Connect user created");
+        assertThat(qm.getNotificationOutbox()).satisfiesExactly(notification -> {
+            assertThat(notification.getScope()).isEqualTo(SCOPE_SYSTEM);
+            assertThat(notification.getGroup()).isEqualTo(GROUP_USER_CREATED);
+            assertThat(notification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
+            assertThat(notification.getTitle()).isEqualTo("User Created");
+            assertThat(notification.getContent()).isEqualTo("User blackbeard was created");
+        });
     }
 
     @Test
-    public void createOidcUserDuplicateUsernameTest() {
+    void createOidcUserDuplicateUsernameTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_CREATE);
+
         qm.createOidcUser("blackbeard");
         final OidcUser user = new OidcUser();
         user.setUsername("blackbeard");
         Response response = jersey.target(V1_USER + "/oidc").request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .put(Entity.entity(user, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(409, response.getStatus(), 0);
+        Assertions.assertEquals(409, response.getStatus(), 0);
         String body = getPlainTextBody(response);
-        Assert.assertEquals("A user with the same username already exists. Cannot create new user.", body);
+        Assertions.assertEquals("A user with the same username already exists. Cannot create new user.", body);
     }
 
     @Test
-    public void deleteOidcUserTest() {
+    void deleteOidcUserTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_DELETE);
+
         qm.createOidcUser("blackbeard");
         OidcUser user = new OidcUser();
         user.setUsername("blackbeard");
@@ -574,11 +617,13 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
                 .property(ClientProperties.SUPPRESS_HTTP_COMPLIANCE_VALIDATION, true) // HACK
                 .method("DELETE", Entity.entity(user, MediaType.APPLICATION_JSON)); // HACK
         // Hack: Workaround to https://github.com/eclipse-ee4j/jersey/issues/3798
-        Assert.assertEquals(204, response.getStatus(), 0);
+        Assertions.assertEquals(204, response.getStatus(), 0);
     }
 
     @Test
-    public void addTeamToUserTest() {
+    void addTeamToUserTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_UPDATE);
+
         qm.createManagedUser("blackbeard", "Captain BlackBeard", "blackbeard@example.com", TEST_USER_PASSWORD_HASH, false, false, false);
         Team team = qm.createTeam("Pirates");
         IdentifiableObject ido = new IdentifiableObject();
@@ -588,19 +633,21 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         Response response = jersey.target(V1_USER + "/blackbeard/membership").request()
                 .header(X_API_KEY, apiKey)
                 .post(Entity.entity(ido, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(200, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(200, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         JsonObject json = parseJsonObject(response);
-        Assert.assertNotNull(json);
-        Assert.assertEquals("Captain BlackBeard", json.getString("fullname"));
-        Assert.assertEquals("blackbeard@example.com", json.getString("email"));
-        Assert.assertFalse(json.getBoolean("forcePasswordChange"));
-        Assert.assertFalse(json.getBoolean("nonExpiryPassword"));
-        Assert.assertFalse(json.getBoolean("suspended"));
+        Assertions.assertNotNull(json);
+        Assertions.assertEquals("Captain BlackBeard", json.getString("fullname"));
+        Assertions.assertEquals("blackbeard@example.com", json.getString("email"));
+        Assertions.assertFalse(json.getBoolean("forcePasswordChange"));
+        Assertions.assertFalse(json.getBoolean("nonExpiryPassword"));
+        Assertions.assertFalse(json.getBoolean("suspended"));
     }
 
     @Test
-    public void addTeamToUserInvalidTeamTest() {
+    void addTeamToUserInvalidTeamTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_UPDATE);
+
         qm.createManagedUser("blackbeard", "Captain BlackBeard", "blackbeard@example.com", TEST_USER_PASSWORD_HASH, false, false, false);
         IdentifiableObject ido = new IdentifiableObject();
         ido.setUuid(UUID.randomUUID().toString());
@@ -609,14 +656,16 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         Response response = jersey.target(V1_USER + "/blackbeard/membership").request()
                 .header(X_API_KEY, apiKey)
                 .post(Entity.entity(ido, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(404, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(404, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         String body = getPlainTextBody(response);
-        Assert.assertEquals("The team could not be found.", body);
+        Assertions.assertEquals("The team could not be found.", body);
     }
 
     @Test
-    public void addTeamToUserInvalidUserTest() {
+    void addTeamToUserInvalidUserTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_UPDATE);
+
         Team team = qm.createTeam("Pirates");
         IdentifiableObject ido = new IdentifiableObject();
         ido.setUuid(team.getUuid().toString());
@@ -625,14 +674,16 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         Response response = jersey.target(V1_USER + "/blackbeard/membership").request()
                 .header(X_API_KEY, apiKey)
                 .post(Entity.entity(ido, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(404, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(404, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         String body = getPlainTextBody(response);
-        Assert.assertEquals("The user could not be found.", body);
+        Assertions.assertEquals("The user could not be found.", body);
     }
 
     @Test
-    public void addTeamToUserDuplicateMembershipTest() {
+    void addTeamToUserDuplicateMembershipTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_UPDATE);
+
         Team team = qm.createTeam("Pirates");
         ManagedUser user = qm.createManagedUser("blackbeard", "Captain BlackBeard", "blackbeard@example.com", TEST_USER_PASSWORD_HASH, false, false, false);
         qm.addUserToTeam(user, team);
@@ -641,15 +692,17 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         Response response = jersey.target(V1_USER + "/blackbeard/membership").request()
                 .header(X_API_KEY, apiKey)
                 .post(Entity.entity(ido, MediaType.APPLICATION_JSON));
-        Assert.assertEquals(304, response.getStatus(), 0);
-        Assert.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
+        Assertions.assertEquals(304, response.getStatus(), 0);
+        Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         String body = getPlainTextBody(response);
         // TODO: Possible bug in Jersey? The response entity is set in the resource, but blank in the actual response.
         //Assert.assertEquals("The user is already a member of the specified team.", body);
     }
 
     @Test
-    public void removeTeamFromUserTest() {
+    void removeTeamFromUserTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_DELETE);
+
         Team team = qm.createTeam("Pirates");
         ManagedUser user = qm.createManagedUser("blackbeard", "Captain BlackBeard", "blackbeard@example.com", TEST_USER_PASSWORD_HASH, false, false, false);
         qm.addUserToTeam(user, team);
@@ -660,11 +713,13 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
                 .property(ClientProperties.SUPPRESS_HTTP_COMPLIANCE_VALIDATION, true) // HACK
                 .method("DELETE", Entity.entity(ido, MediaType.APPLICATION_JSON)); // HACK
         // Hack: Workaround to https://github.com/eclipse-ee4j/jersey/issues/3798
-        Assert.assertEquals(200, response.getStatus(), 0);
+        Assertions.assertEquals(200, response.getStatus(), 0);
     }
 
     @Test
-    public void setUserTeamsTest() {
+    void setUserTeamsTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_UPDATE);
+
         String username = qm.createManagedUser("blackbeard", "Captain BlackBeard", "blackbeard@example.com",
         TEST_USER_PASSWORD_HASH, false, false, false).getUsername();
         String endpoint = V1_USER + "/membership";
@@ -699,13 +754,13 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
                 .property(ClientProperties.SUPPRESS_HTTP_COMPLIANCE_VALIDATION, true)
                 .put(Entity.entity(teamRequest1.toString(), MediaType.APPLICATION_JSON));
 
-        Assert.assertEquals(200, response.getStatus());
+        Assertions.assertEquals(200, response.getStatus());
 
         User user = qm.getManagedUser("blackbeard");
         List<Team> userTeams = user.getTeams();
 
-        Assert.assertEquals(userTeams.size(), teamSet1.size());
-        Assert.assertTrue(userTeams.containsAll(teamSet1));
+        Assertions.assertEquals(userTeams.size(), teamSet1.size());
+        Assertions.assertTrue(userTeams.containsAll(teamSet1));
 
         response = jersey.target(endpoint).request()
                 .header(X_API_KEY, apiKey)
@@ -715,14 +770,16 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
         user = qm.getUser("blackbeard");
         userTeams = user.getTeams();
 
-        Assert.assertEquals(200, response.getStatus());
-        Assert.assertEquals(userTeams.size(), teamSet2.size());
-        Assert.assertTrue(Collections.disjoint(userTeams, teamSet1));
-        Assert.assertTrue(userTeams.containsAll(teamSet2));
+        Assertions.assertEquals(200, response.getStatus());
+        Assertions.assertEquals(userTeams.size(), teamSet2.size());
+        Assertions.assertTrue(Collections.disjoint(userTeams, teamSet1));
+        Assertions.assertTrue(userTeams.containsAll(teamSet2));
     }
 
     @Test
-    public void setUserTeamsInvalidTest() {
+    void setUserTeamsInvalidTest() {
+        initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_UPDATE);
+
         String endpoint = V1_USER + "/membership";
         qm.createManagedUser("blackbeard", "Captain BlackBeard", "blackbeard@example.com",
                 TEST_USER_PASSWORD_HASH, false, false, false);
@@ -742,114 +799,169 @@ public class UserResourceAuthenticatedTest extends ResourceTest {
                 .header(X_API_KEY, apiKey)
                 .property(ClientProperties.SUPPRESS_HTTP_COMPLIANCE_VALIDATION, true)
                 .put(Entity.entity(badTeamBody.toString(), MediaType.APPLICATION_JSON));
-        Assert.assertEquals(400, response.getStatus());
+        Assertions.assertEquals(400, response.getStatus());
 
         // unknown user
         response = jersey.target(endpoint).request()
                 .header(X_API_KEY, apiKey)
                 .property(ClientProperties.SUPPRESS_HTTP_COMPLIANCE_VALIDATION, true)
                 .put(Entity.entity(unknownUserBody.toString(), MediaType.APPLICATION_JSON));
-        Assert.assertEquals(404, response.getStatus());
+        Assertions.assertEquals(404, response.getStatus());
 
     }
 
     @Test
-    public void assignProjectRoleToUserTest() {
-        // Arrange
-        ManagedUser user = qm.createManagedUser("roleuser", TEST_USER_PASSWORD_HASH);
-        Project project = qm.createProject(
-                "Test Project", "null",
-                "null", Collections.emptyList(),
-                null, null, null, false);
+    void shouldReturnEffectivePermissions() {
+        final var viewPortfolio = qm.createPermission(Permissions.VIEW_PORTFOLIO.name(), null);
+        final var bomUpload = qm.createPermission(Permissions.BOM_UPLOAD.name(), null);
+        team.setPermissions(List.of(viewPortfolio, bomUpload));
+        qm.persist(team);
 
-        Role role = qm.createRole("Test Role", Collections.emptyList());
-
-        ModifyUserProjectRoleRequest request = new ModifyUserProjectRoleRequest(
-                user.getUsername(),
-                role.getUuid().toString(),
-                project.getUuid().toString());
-
-        // Act
-        Response response = jersey.target(V1_USER + "/role").request()
-                .header(X_API_KEY, apiKey)
-                .put(Entity.entity(request, MediaType.APPLICATION_JSON));
-
-        // Assert
-        Assert.assertEquals(200, response.getStatus());
-        JsonObject json = parseJsonObject(response);
-        Assert.assertNotNull(json);
-        Assert.assertEquals("roleuser", json.getString("username"));
-        // Optionally, check if the user has the role for the project in the DB
+        final Response response = jersey
+                .target(V1_USER + "/self/permissions")
+                .request()
+                .header("Authorization", "Bearer " + sessionToken)
+                .get(Response.class);
+        assertThat(response.getStatus()).isEqualTo(200);
+        final JsonArray json = parseJsonArray(response);
+        assertThat(json).isNotNull();
+        assertThat(json.getValuesAs(jakarta.json.JsonString::getString))
+                .containsExactlyInAnyOrder("VIEW_PORTFOLIO", "BOM_UPLOAD");
     }
 
     @Test
-    public void assignProjectRoleToUserAlreadyAssignedTest() {
-        ManagedUser user = qm.createManagedUser("roleuser2", TEST_USER_PASSWORD_HASH);
-        Project project = qm.createProject(
-                "Test Project 2","null",
-                "null",Collections.emptyList(),
-                null,null,null,false);
-        Role role = qm.createRole("Test Role 2", Collections.emptyList());
-        qm.addRoleToUser(user, role, project);
-
-
-        ModifyUserProjectRoleRequest request = new ModifyUserProjectRoleRequest(
-                user.getUsername(),
-                role.getUuid().toString(),
-                project.getUuid().toString()
-        );
-
-        Response response = jersey.target(V1_USER + "/role").request()
-                .header(X_API_KEY, apiKey)
-                .put(Entity.entity(request, MediaType.APPLICATION_JSON));
-
-        Assert.assertEquals(304, response.getStatus());
+    void shouldReturnEmptyPermissionsWhenNoneAssigned() {
+        final Response response = jersey
+                .target(V1_USER + "/self/permissions")
+                .request()
+                .header("Authorization", "Bearer " + sessionToken)
+                .get(Response.class);
+        assertThat(response.getStatus()).isEqualTo(200);
+        final JsonArray json = parseJsonArray(response);
+        assertThat(json).isEmpty();
     }
 
     @Test
-    public void removeProjectRoleFromUserTest() {
-        ManagedUser user = qm.createManagedUser("roleuser3", TEST_USER_PASSWORD_HASH);
-        Project project = qm.createProject(
-                "Test Project 3","null",
-                "null",Collections.emptyList(),
-                null,null,null,false);
-        Role role = qm.createRole("Test Role 3", Collections.emptyList());
-        qm.addRoleToUser(user, role, project);
-
-        ModifyUserProjectRoleRequest request = new ModifyUserProjectRoleRequest(
-                user.getUsername(),
-                role.getUuid().toString(),
-                project.getUuid().toString()
-        );
-
-        Response response = jersey.target(V1_USER + "/role").request()
+    void shouldRejectGetSelfPermissionsWithApiKey() {
+        final Response response = jersey
+                .target(V1_USER + "/self/permissions")
+                .request()
                 .header(X_API_KEY, apiKey)
-                .property(ClientProperties.SUPPRESS_HTTP_COMPLIANCE_VALIDATION, true)
-                .method("DELETE", Entity.entity(request, MediaType.APPLICATION_JSON));
-
-        Assert.assertEquals(204, response.getStatus());
+                .get(Response.class);
+        assertThat(response.getStatus()).isEqualTo(401);
     }
 
     @Test
-    public void removeProjectRoleFromUserNotAssignedTest() {
-        ManagedUser user = qm.createManagedUser("roleuser4", TEST_USER_PASSWORD_HASH);
-        Project project = qm.createProject(
-                "Test Project 4","null",
-                "null",Collections.emptyList(),
-                null,null,null,false);
-        Role role = qm.createRole("Test Role 4", Collections.emptyList());
+    void shouldLogoutAndInvalidateSession() {
+        // Verify the session is valid before logout.
+        final Response beforeResponse = jersey
+                .target(V1_USER + "/self")
+                .request()
+                .header("Authorization", "Bearer " + sessionToken)
+                .get(Response.class);
+        assertThat(beforeResponse.getStatus()).isEqualTo(200);
 
-        ModifyUserProjectRoleRequest request = new ModifyUserProjectRoleRequest(
-                user.getUsername(),
-                role.getUuid().toString(),
-                project.getUuid().toString()
-        );
+        // Logout.
+        final Response logoutResponse = jersey
+                .target(V1_USER + "/logout")
+                .request()
+                .header("Authorization", "Bearer " + sessionToken)
+                .post(Entity.json(""));
+        assertThat(logoutResponse.getStatus()).isEqualTo(204);
 
-        Response response = jersey.target(V1_USER + "/role").request()
-                .header(X_API_KEY, apiKey)
-                .property(ClientProperties.SUPPRESS_HTTP_COMPLIANCE_VALIDATION, true)
-                .method("DELETE", Entity.entity(request, MediaType.APPLICATION_JSON));
-
-        Assert.assertEquals(304, response.getStatus());
+        // Verify the session is no longer valid.
+        final Response afterResponse = jersey
+                .target(V1_USER + "/self")
+                .request()
+                .header("Authorization", "Bearer " + sessionToken)
+                .get(Response.class);
+        assertThat(afterResponse.getStatus()).isEqualTo(401);
     }
+
+    @Test
+    void shouldReturnNoContentWhenLoggingOutWithApiKey() {
+        final Response response = jersey
+                .target(V1_USER + "/logout")
+                .request()
+                .header(X_API_KEY, apiKey)
+                .post(Entity.json(""));
+        assertThat(response.getStatus()).isEqualTo(204);
+    }
+
+    @Test
+    void shouldRejectExpiredSession() {
+        final List<UserSession> sessions = qm.getPersistenceManager()
+                .newQuery(UserSession.class, "user == :user")
+                .setParameters(testUser)
+                .executeList();
+        assertThat(sessions).hasSize(1);
+        sessions.getFirst().setExpiresAt(new Date(System.currentTimeMillis() - 3_600_000));
+
+        final Response response = jersey
+                .target(V1_USER + "/self")
+                .request()
+                .header("Authorization", "Bearer " + sessionToken)
+                .get(Response.class);
+        assertThat(response.getStatus()).isEqualTo(401);
+    }
+
+    @Test
+    void shouldRejectSuspendedUserWithValidSession() {
+        testUser.setSuspended(true);
+        qm.persist(testUser);
+
+        final Response response = jersey
+                .target(V1_USER + "/self")
+                .request()
+                .header("Authorization", "Bearer " + sessionToken)
+                .get(Response.class);
+        assertThat(response.getStatus()).isEqualTo(401);
+    }
+
+    @Test
+    void shouldDeleteExpiredSessions() {
+        new SessionTokenService().createSession(testUser.getId());
+
+        final List<UserSession> sessions = qm.getPersistenceManager()
+                .newQuery(UserSession.class)
+                .executeList();
+        for (final UserSession session : sessions) {
+            session.setExpiresAt(new Date(System.currentTimeMillis() - 3_600_000));
+        }
+        qm.getPersistenceManager().makePersistentAll(sessions);
+
+        final int deleted = new SessionTokenService().deleteExpiredSessions();
+        assertThat(deleted).isEqualTo(2);
+
+        final List<UserSession> remaining = qm.getPersistenceManager()
+                .newQuery(UserSession.class, "user == :user")
+                .setParameters(testUser)
+                .executeList();
+        assertThat(remaining).isEmpty();
+    }
+
+    @Test
+    void shouldNotRevokeSessionOfDifferentUser() {
+        final ManagedUser otherUser = qm.createManagedUser("otheruser", TEST_USER_PASSWORD_HASH);
+        qm.addUserToTeam(otherUser, team);
+        final String otherToken = new SessionTokenService().createSession(otherUser.getId());
+
+        final Response beforeResponse = jersey
+                .target(V1_USER + "/self")
+                .request()
+                .header("Authorization", "Bearer " + otherToken)
+                .get(Response.class);
+        assertThat(beforeResponse.getStatus()).isEqualTo(200);
+
+        final boolean deleted = new SessionTokenService().deleteSession(otherToken, testUser.getId());
+        assertThat(deleted).isFalse();
+
+        final Response afterResponse = jersey
+                .target(V1_USER + "/self")
+                .request()
+                .header("Authorization", "Bearer " + otherToken)
+                .get(Response.class);
+        assertThat(afterResponse.getStatus()).isEqualTo(200);
+    }
+
 }

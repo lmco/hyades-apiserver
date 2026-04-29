@@ -18,14 +18,17 @@
  */
 package org.dependencytrack.persistence.jdbi;
 
-import alpine.Config;
-import alpine.common.metrics.Metrics;
 import alpine.resources.AlpineRequest;
 import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import io.micrometer.core.instrument.Metrics;
+import org.dependencytrack.common.datasource.DataSourceRegistry;
+import org.dependencytrack.common.pagination.SimplePageTokenEncoder;
 import org.dependencytrack.persistence.QueryManager;
-import org.dependencytrack.util.PersistenceUtil;
+import org.dependencytrack.persistence.jdbi.mapping.PackageMetadataRowMapper;
+import org.dependencytrack.persistence.jdbi.mapping.PurlColumnMapper;
+import org.dependencytrack.support.jdbi.exception.ExceptionTranslationPlugin;
 import org.jdbi.v3.core.Handle;
 import org.jdbi.v3.core.HandleCallback;
 import org.jdbi.v3.core.HandleConsumer;
@@ -40,6 +43,8 @@ import javax.jdo.PersistenceManager;
 import javax.jdo.PersistenceManagerFactory;
 import javax.sql.DataSource;
 import java.sql.Connection;
+import java.sql.Timestamp;
+import java.util.Date;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class JdbiFactory {
@@ -106,25 +111,17 @@ public class JdbiFactory {
      *
      * @return The global {@link Jdbi} instance
      */
-    static Jdbi createJdbi() {
-        // NB: The PersistenceManager is only required to gain access to the underlying
-        // datasource. It must be closed to avoid resource leakage, but the JDBI instance
-        // will continue to work.
-        try (final PersistenceManager pm = alpine.server.persistence.PersistenceManagerFactory.createPersistenceManager()) {
-            return createJdbi(pm);
-        }
-    }
-
-    private static Jdbi createJdbi(final PersistenceManager pm) {
+    public static Jdbi createJdbi() {
         return GLOBAL_INSTANCE_HOLDER
                 .updateAndGet(previous -> {
-                    if (previous == null || previous.pmf != pm.getPersistenceManagerFactory()) {
+                    final DataSource dataSource = DataSourceRegistry.getInstance().getDefault();
+                    if (previous == null || previous.dataSource() != dataSource) {
                         // The PMF reference does not usually change, unless it has been recreated,
                         // or multiple PMFs exist in the same application. The latter is not the case
                         // for Dependency-Track, and the former only happens during test execution,
                         // where each test (re-)creates the PMF.
-                        final Jdbi jdbi = createFromPmf(pm.getPersistenceManagerFactory());
-                        return new GlobalInstanceHolder(jdbi, pm.getPersistenceManagerFactory());
+                        final Jdbi jdbi = customizeJdbi(Jdbi.create(dataSource));
+                        return new GlobalInstanceHolder(jdbi, dataSource);
                     }
 
                     return previous;
@@ -168,11 +165,7 @@ public class JdbiFactory {
         return customizeJdbi(Jdbi.create(new JdoConnectionFactory(pm)));
     }
 
-    private record GlobalInstanceHolder(Jdbi jdbi, PersistenceManagerFactory pmf) {
-    }
-
-    private static Jdbi createFromPmf(final PersistenceManagerFactory pmf) {
-        return customizeJdbi(Jdbi.create(PersistenceUtil.getDataSource(pmf)));
+    private record GlobalInstanceHolder(Jdbi jdbi, DataSource dataSource) {
     }
 
     private static Jdbi customizeJdbi(final Jdbi jdbi) {
@@ -180,12 +173,17 @@ public class JdbiFactory {
                 .installPlugin(new SqlObjectPlugin())
                 .installPlugin(new PostgresPlugin())
                 .installPlugin(new Jackson2Plugin())
-                .setTemplateEngine(FreemarkerEngine.instance());
+                .installPlugin(new ExceptionTranslationPlugin())
+                .setTemplateEngine(FreemarkerEngine.instance())
+                .setSqlLogger(new QueryTimingSqlLogger(Metrics.globalRegistry))
+                .registerArrayType(Date.class, "TIMESTAMPTZ")
+                .registerArrayType(Timestamp.class, "TIMESTAMPTZ")
+                .registerColumnMapper(new PurlColumnMapper())
+                .registerRowMapper(new PackageMetadataRowMapper());
 
-        if (Config.getInstance().getPropertyAsBoolean(Config.AlpineKey.METRICS_ENABLED)) {
-            preparedJdbi.setSqlLogger(new QueryTimingSqlLogger(Metrics.getRegistry()));
-        }
-
+        preparedJdbi
+                .getConfig(PaginationConfig.class)
+                .setPageTokenEncoder(new SimplePageTokenEncoder());
         preparedJdbi.getConfig(Jackson2Config.class).setMapper(createJsonMapper());
         return preparedJdbi;
     }

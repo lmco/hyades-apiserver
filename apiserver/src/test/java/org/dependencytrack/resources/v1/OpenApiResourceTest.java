@@ -21,30 +21,27 @@ package org.dependencytrack.resources.v1;
 import alpine.server.filters.ApiFilter;
 import io.swagger.parser.OpenAPIParser;
 import io.swagger.v3.parser.core.models.SwaggerParseResult;
-import org.dependencytrack.JerseyTestRule;
-import org.dependencytrack.ResourceTest;
-import org.glassfish.jersey.client.ClientProperties;
-import org.glassfish.jersey.server.ResourceConfig;
-import org.junit.ClassRule;
-import org.junit.Test;
-
 import jakarta.ws.rs.core.Response;
+import org.dependencytrack.JerseyTestExtension;
+import org.dependencytrack.ResourceTest;
+import org.glassfish.jersey.server.ResourceConfig;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class OpenApiResourceTest extends ResourceTest {
 
-    @ClassRule
-    public static JerseyTestRule jersey = new JerseyTestRule(
+    @RegisterExtension
+    static JerseyTestExtension jersey = new JerseyTestExtension(
             new ResourceConfig(OpenApiResource.class)
                     .register(ApiFilter.class));
 
     @Test
     public void testOpenApiJson() {
         final Response response = jersey.target("/openapi.json")
-                // NB: Initial generation of the OpenAPI spec can take a while in CI.
-                .property(ClientProperties.READ_TIMEOUT, "90000")
                 .request()
                 .get(Response.class);
         assertThat(response.getStatus()).isEqualTo(200);
@@ -62,8 +59,6 @@ public class OpenApiResourceTest extends ResourceTest {
     @Test
     public void testOpenApiYaml() {
         final Response response = jersey.target("/openapi.yaml")
-                // NB: Initial generation of the OpenAPI spec can take a while in CI.
-                .property(ClientProperties.READ_TIMEOUT, "90000")
                 .request()
                 .get(Response.class);
         assertThat(response.getStatus()).isEqualTo(200);

@@ -18,8 +18,6 @@
  */
 package org.dependencytrack.resources.v1;
 
-import alpine.common.logging.Logger;
-import alpine.event.framework.Event;
 import alpine.model.About;
 import alpine.server.auth.PermissionRequired;
 import com.github.packageurl.PackageURL;
@@ -36,6 +34,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.inject.Inject;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.HeaderParam;
 import jakarta.ws.rs.POST;
@@ -45,33 +44,34 @@ import jakarta.ws.rs.Produces;
 import jakarta.ws.rs.QueryParam;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
+import org.dependencytrack.analysis.AnalyzeProjectWorkflow;
 import org.dependencytrack.auth.Permissions;
-import org.dependencytrack.event.PortfolioRepositoryMetaAnalysisEvent;
-import org.dependencytrack.event.PortfolioVulnerabilityAnalysisEvent;
-import org.dependencytrack.event.ProjectRepositoryMetaAnalysisEvent;
-import org.dependencytrack.event.ProjectVulnerabilityAnalysisEvent;
+import org.dependencytrack.dex.engine.api.DexEngine;
+import org.dependencytrack.dex.engine.api.request.CreateWorkflowRunRequest;
 import org.dependencytrack.integrations.FindingPackagingFormat;
 import org.dependencytrack.model.Finding;
 import org.dependencytrack.model.GroupedFinding;
+import org.dependencytrack.model.PackageMetadata;
 import org.dependencytrack.model.Project;
-import org.dependencytrack.model.RepositoryMetaComponent;
 import org.dependencytrack.model.RepositoryType;
 import org.dependencytrack.model.Vulnerability;
 import org.dependencytrack.model.validation.ValidUuid;
 import org.dependencytrack.persistence.QueryManager;
-import org.dependencytrack.persistence.RepositoryQueryManager;
 import org.dependencytrack.persistence.jdbi.FindingDao;
-import org.dependencytrack.persistence.jdbi.RepositoryMetaDao;
+import org.dependencytrack.persistence.jdbi.PackageMetadataDao;
+import org.dependencytrack.pkgmetadata.ResolvePackageMetadataWorkflow;
+import org.dependencytrack.proto.internal.workflow.v1.AnalyzeProjectWorkflowArg;
 import org.dependencytrack.resources.AbstractApiResource;
 import org.dependencytrack.resources.v1.openapi.PaginatedApi;
 import org.dependencytrack.resources.v1.problems.ProblemDetails;
 import org.dependencytrack.resources.v1.vo.BomUploadResponse;
 import org.dependencytrack.util.PurlUtil;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.StringWriter;
 import java.io.Writer;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -79,7 +79,11 @@ import java.util.Objects;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
+import static org.dependencytrack.dex.DexWorkflowLabels.WF_LABEL_PROJECT_UUID;
+import static org.dependencytrack.dex.DexWorkflowLabels.WF_LABEL_TRIGGERED_BY;
+import static org.dependencytrack.persistence.jdbi.JdbiFactory.useJdbiHandle;
 import static org.dependencytrack.persistence.jdbi.JdbiFactory.withJdbiHandle;
+import static org.dependencytrack.proto.internal.workflow.v1.AnalysisTrigger.ANALYSIS_TRIGGER_MANUAL;
 
 /**
  * JAX-RS resources for processing findings.
@@ -95,8 +99,15 @@ import static org.dependencytrack.persistence.jdbi.JdbiFactory.withJdbiHandle;
 })
 public class FindingResource extends AbstractApiResource {
 
-    private static final Logger LOGGER = Logger.getLogger(FindingResource.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(FindingResource.class);
     public static final String MEDIA_TYPE_SARIF_JSON = "application/sarif+json";
+
+    private final DexEngine dexEngine;
+
+    @Inject
+    FindingResource(DexEngine dexEngine) {
+        this.dexEngine = dexEngine;
+    }
 
     @GET
     @Path("/project/{uuid}")
@@ -138,7 +149,8 @@ public class FindingResource extends AbstractApiResource {
             if (project != null) {
                 requireAccess(qm, project);
                 List<FindingDao.FindingRow> findingRows = withJdbiHandle(getAlpineRequest(), handle ->
-                        handle.attach(FindingDao.class).getFindingsByProject(project.getId(), suppressed, hasAnalysis));
+                        handle.attach(FindingDao.class).getFindingsByProject(
+                                project.getId(), false, suppressed, hasAnalysis, source != null ? source.name() : null));
                 final long totalCount = findingRows.isEmpty() ? 0 : findingRows.getFirst().totalCount();
                 List<Finding> findings = findingRows.stream().map(Finding::new).toList();
                 findings = mapComponentLatestVersion(findings);
@@ -151,9 +163,6 @@ public class FindingResource extends AbstractApiResource {
                         LOGGER.error(ioException.getMessage(), ioException);
                         return Response.status(Response.Status.INTERNAL_SERVER_ERROR).entity("An error occurred while generating SARIF file").build();
                     }
-                }
-                if (source != null) {
-                    findings = findings.stream().filter(finding -> source.name().equals(finding.getVulnerability().get("source"))).collect(Collectors.toList());
                 }
                 return Response.ok(findings).header(TOTAL_COUNT_HEADER, totalCount).build();
             } else {
@@ -192,36 +201,13 @@ public class FindingResource extends AbstractApiResource {
                 final List<Finding> findings = withJdbiHandle(getAlpineRequest(), handle ->
                         handle.attach(FindingDao.class).getFindings(project.getId(), false));
                 final FindingPackagingFormat fpf = new FindingPackagingFormat(UUID.fromString(uuid), findings);
-                final Response.ResponseBuilder rb = Response.ok(fpf.getDocument().toString(), "application/json");
+                final Response.ResponseBuilder rb = Response.ok(fpf.getDocument(), "application/json");
                 rb.header("Content-Disposition", "inline; filename=findings-" + uuid + ".fpf");
                 return rb.build();
             } else {
                 return Response.status(Response.Status.NOT_FOUND).entity("The project could not be found.").build();
             }
         }
-    }
-
-    @POST
-    @Path("/portfolio/analyze")
-    @Operation(
-            summary = "Triggers Vulnerability Analysis for the entire portfolio",
-            description = "<p>Requires permission <strong>SYSTEM_CONFIGURATION</strong> or <strong>SYSTEM_CONFIGURATION_CREATE</strong></p>"
-    )
-    @ApiResponses(value = {
-            @ApiResponse(responseCode = "200", description = "Analysis triggered successfully"),
-            @ApiResponse(responseCode = "304", description = "Analysis is already in progress"),
-            @ApiResponse(responseCode = "401", description = "Unauthorized")
-    })
-    @PermissionRequired({Permissions.Constants.SYSTEM_CONFIGURATION, Permissions.Constants.SYSTEM_CONFIGURATION_CREATE}) // Require admin privileges due to system impact
-    public Response analyzePortfolio() {
-        LOGGER.info("Portfolio analysis requested by " + super.getPrincipal().getName());
-        if (Event.isEventBeingProcessed(PortfolioRepositoryMetaAnalysisEvent.CHAIN_IDENTIFIER)) {
-            LOGGER.info("Another portfolio analysis event is already being processed; Dropping");
-            return Response.status(Response.Status.NOT_MODIFIED).build();
-        }
-
-        Event.dispatch(new PortfolioVulnerabilityAnalysisEvent());
-        return Response.ok().build();
     }
 
     @POST
@@ -248,24 +234,30 @@ public class FindingResource extends AbstractApiResource {
     public Response analyzeProject(
             @Parameter(description = "The UUID of the project to analyze", schema = @Schema(type = "string", format = "uuid"), required = true)
             @PathParam("uuid") @ValidUuid String uuid) {
-        try (QueryManager qm = new QueryManager()) {
-            return qm.callInTransaction(() -> {
-                final Project project = qm.getObjectByUuid(Project.class, uuid);
-                if (project != null) {
-                    requireAccess(qm, project);
-                    LOGGER.info("Analysis of project " + project.getUuid() + " requested by " + super.getPrincipal().getName());
-                    final ProjectVulnerabilityAnalysisEvent vae = new ProjectVulnerabilityAnalysisEvent(project.getUuid());
-                    qm.createReanalyzeSteps(vae.getChainIdentifier());
-                    Event.dispatch(vae);
-                    final ProjectRepositoryMetaAnalysisEvent projectRepositoryMetaAnalysisEvent = new ProjectRepositoryMetaAnalysisEvent(project.getUuid());
-                    Event.dispatch(projectRepositoryMetaAnalysisEvent);
+        useJdbiHandle(handle -> requireProjectAccess(handle, UUID.fromString(uuid)));
 
-                    return Response.ok(Collections.singletonMap("token", vae.getChainIdentifier())).build();
-                } else {
-                    return Response.status(Response.Status.NOT_FOUND).entity("The project could not be found.").build();
-                }
-            });
+        final UUID runId = dexEngine.createRun(
+                new CreateWorkflowRunRequest<>(AnalyzeProjectWorkflow.class)
+                        .withWorkflowInstanceId("analyze-project-manual:" + uuid)
+                        .withConcurrencyKey("analyze-project:" + uuid)
+                        .withLabels(Map.ofEntries(
+                                Map.entry(WF_LABEL_PROJECT_UUID, uuid),
+                                Map.entry(WF_LABEL_TRIGGERED_BY, getPrincipal().getName())))
+                        .withPriority(75)
+                        .withArgument(
+                                AnalyzeProjectWorkflowArg.newBuilder()
+                                        .setProjectUuid(uuid)
+                                        .setTrigger(ANALYSIS_TRIGGER_MANUAL)
+                                        .build()));
+        if (runId == null) {
+            return Response.status(Response.Status.CONFLICT).build();
         }
+
+        dexEngine.createRun(
+                new CreateWorkflowRunRequest<>(ResolvePackageMetadataWorkflow.class)
+                        .withWorkflowInstanceId(ResolvePackageMetadataWorkflow.INSTANCE_ID));
+
+        return Response.ok(Map.of("token", runId)).build();
     }
 
     @GET
@@ -314,7 +306,15 @@ public class FindingResource extends AbstractApiResource {
                                    @Parameter(description = "Filter CVSSv3 from this value")
                                    @QueryParam("cvssv3From") String cvssv3From,
                                    @Parameter(description = "Filter CVSSv3 from this Value")
-                                   @QueryParam("cvssv3To") String cvssv3To) {
+                                   @QueryParam("cvssv3To") String cvssv3To,
+                                   @Parameter(description = "Filter EPSS from this value")
+                                   @QueryParam("epssFrom") String epssFrom,
+                                   @Parameter(description = "Filter EPSS to this value")
+                                   @QueryParam("epssTo") String epssTo,
+                                   @Parameter(description = "Filter EPSS Percentile from this value")
+                                   @QueryParam("epssPercentileFrom") String epssPercentileFrom,
+                                   @Parameter(description = "Filter EPSS Percentile to this value")
+                                   @QueryParam("epssPercentileTo") String epssPercentileTo) {
         final Map<String, String> filters = new HashMap<>();
         filters.put("severity", severity);
         filters.put("analysisStatus", analysisStatus);
@@ -329,6 +329,10 @@ public class FindingResource extends AbstractApiResource {
         filters.put("cvssv2To", cvssv2To);
         filters.put("cvssv3From", cvssv3From);
         filters.put("cvssv3To", cvssv3To);
+        filters.put("epssFrom", epssFrom);
+        filters.put("epssTo", epssTo);
+        filters.put("epssPercentileFrom", epssPercentileFrom);
+        filters.put("epssPercentileTo", epssPercentileTo);
         List<FindingDao.FindingRow> findingRows = withJdbiHandle(getAlpineRequest(), handle -> handle.attach(FindingDao.class)
                 .getAllFindings(filters, showSuppressed, showInactive));
         final long totalCount = findingRows.isEmpty() ? 0 : findingRows.getFirst().totalCount();
@@ -375,6 +379,14 @@ public class FindingResource extends AbstractApiResource {
                                    @QueryParam("cvssv3From") String cvssv3From,
                                    @Parameter(description = "Filter CVSSv3 to this value")
                                    @QueryParam("cvssv3To") String cvssv3To,
+                                   @Parameter(description = "Filter EPSS from this value")
+                                   @QueryParam("epssFrom") String epssFrom,
+                                   @Parameter(description = "Filter EPSS to this value")
+                                   @QueryParam("epssTo") String epssTo,
+                                   @Parameter(description = "Filter EPSS Percentile from this value")
+                                   @QueryParam("epssPercentileFrom") String epssPercentileFrom,
+                                   @Parameter(description = "Filter EPSS Percentile to this value")
+                                   @QueryParam("epssPercentileTo") String epssPercentileTo,
                                    @Parameter(description = "Filter occurrences in projects from this value")
                                    @QueryParam("occurrencesFrom") String occurrencesFrom,
                                    @Parameter(description = "Filter occurrences in projects to this value")
@@ -389,6 +401,10 @@ public class FindingResource extends AbstractApiResource {
         filters.put("cvssv2To", cvssv2To);
         filters.put("cvssv3From", cvssv3From);
         filters.put("cvssv3To", cvssv3To);
+        filters.put("epssFrom", epssFrom);
+        filters.put("epssTo", epssTo);
+        filters.put("epssPercentileFrom", epssPercentileFrom);
+        filters.put("epssPercentileTo", epssPercentileTo);
         filters.put("occurrencesFrom", occurrencesFrom);
         filters.put("occurrencesTo", occurrencesTo);
         List<FindingDao.GroupedFindingRow> findingRows = withJdbiHandle(getAlpineRequest(), handle -> handle.attach(FindingDao.class)
@@ -429,7 +445,7 @@ public class FindingResource extends AbstractApiResource {
     }
 
     public static List<Finding> mapComponentLatestVersion(List<Finding> findingList){
-        final Map<RepositoryQueryManager.RepositoryMetaComponentSearch, List<Finding>> findingsByMetaComponentSearch = findingList.stream()
+        final Map<String, List<Finding>> findingsByPurlPackage = findingList.stream()
                 .filter(finding -> finding.getComponent().get("purl") != null)
                 .map(finding -> {
                     final PackageURL purl = PurlUtil.silentPurl((String) finding.getComponent().get("purl"));
@@ -441,22 +457,21 @@ public class FindingResource extends AbstractApiResource {
                     if (repositoryType == RepositoryType.UNSUPPORTED) {
                         return null;
                     }
-                    final var search = new RepositoryQueryManager.RepositoryMetaComponentSearch(repositoryType, purl.getNamespace(), purl.getName());
-                    return Map.entry(search, finding);
+                    return Map.entry(PurlUtil.purlPackageOnly(purl), finding);
                 })
                 .filter(Objects::nonNull)
                 .collect(Collectors.groupingBy(
                         Map.Entry::getKey,
                         Collectors.mapping(Map.Entry::getValue, Collectors.toList())
                 ));
-        final List<RepositoryMetaComponent> repositoryMetaComponents = withJdbiHandle(handle ->
-                handle.attach(RepositoryMetaDao.class).getRepositoryMetaComponents(findingsByMetaComponentSearch.keySet()));
-        repositoryMetaComponents.forEach(metaComponent -> {
-            final var search = new RepositoryQueryManager.RepositoryMetaComponentSearch(metaComponent.getRepositoryType(), metaComponent.getNamespace(), metaComponent.getName());
-            final List<Finding> affectedFindings = findingsByMetaComponentSearch.get(search);
-            if (affectedFindings != null) {
+        final List<PackageMetadata> packageMetadataList = withJdbiHandle(handle ->
+                new PackageMetadataDao(handle).getAll(findingsByPurlPackage.keySet()));
+        packageMetadataList.forEach(packageMetadata -> {
+            final List<Finding> affectedFindings =
+                    findingsByPurlPackage.get(packageMetadata.purl().canonicalize());
+            if (affectedFindings != null && packageMetadata.latestVersion() != null) {
                 for (final Finding finding : affectedFindings) {
-                    finding.getComponent().put("latestVersion", metaComponent.getLatestVersion());
+                    finding.getComponent().put("latestVersion", packageMetadata.latestVersion());
                 }
             }
         });

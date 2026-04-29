@@ -19,9 +19,8 @@
 package org.dependencytrack.persistence.jdbi;
 
 import alpine.model.ConfigProperty;
-import alpine.model.IConfigProperty.PropertyType;
-import alpine.security.crypto.DataEncryption;
 import org.dependencytrack.model.ConfigPropertyConstants;
+import org.jdbi.v3.sqlobject.SqlObject;
 import org.jdbi.v3.sqlobject.config.RegisterBeanMapper;
 import org.jdbi.v3.sqlobject.customizer.Bind;
 import org.jdbi.v3.sqlobject.customizer.BindBean;
@@ -34,19 +33,7 @@ import java.util.Optional;
 /**
  * @since 5.6.0
  */
-public interface ConfigPropertyDao {
-
-    @SqlUpdate("""
-            INSERT INTO "CONFIGPROPERTY" ("GROUPNAME", "PROPERTYNAME", "PROPERTYTYPE", "DESCRIPTION", "PROPERTYVALUE")
-            VALUES (:group, :name, :type, :description, :value)
-            ON CONFLICT ("GROUPNAME", "PROPERTYNAME") DO NOTHING
-            """)
-    void maybeCreate(
-            @Bind String group,
-            @Bind String name,
-            @Bind PropertyType type,
-            @Bind String description,
-            @Bind String value);
+public interface ConfigPropertyDao extends SqlObject {
 
     @SqlQuery("""
             SELECT *
@@ -63,17 +50,7 @@ public interface ConfigPropertyDao {
     }
 
     default Optional<String> getOptionalValue(final ConfigPropertyConstants property) {
-        final Optional<String> optionalRawValue = getOptionalRawValue(property);
-        if (optionalRawValue.isEmpty() || property.getPropertyType() != PropertyType.ENCRYPTEDSTRING) {
-            return optionalRawValue;
-        }
-
-        try {
-            final String decryptedValue = DataEncryption.decryptAsString(optionalRawValue.get());
-            return Optional.of(decryptedValue);
-        } catch (Exception e) {
-            throw new IllegalStateException("Failed to decrypt value", e);
-        }
+        return getOptionalRawValue(property);
     }
 
     default <T> Optional<T> getOptionalValue(final ConfigPropertyConstants property, final Class<T> clazz) {
@@ -93,6 +70,8 @@ public interface ConfigPropertyDao {
             convertedValue = clazz.cast(Boolean.parseBoolean(optionalStringValue.get()));
         } else if (clazz.isAssignableFrom(Integer.class)) {
             convertedValue = clazz.cast(Integer.parseInt(optionalStringValue.get()));
+        } else if (clazz.isAssignableFrom(Long.class)) {
+            convertedValue = clazz.cast(Long.parseLong(optionalStringValue.get()));
         } else {
             throw new IllegalArgumentException("Cannot convert to %s".formatted(clazz.getName()));
         }

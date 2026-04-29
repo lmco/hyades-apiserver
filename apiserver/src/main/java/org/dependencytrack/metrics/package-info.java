@@ -16,8 +16,7 @@
  * SPDX-License-Identifier: Apache-2.0
  * Copyright (c) OWASP Foundation. All Rights Reserved.
  */
-
-/**
- * Package contains helper method for creating or manipulating various metrics.
- */
+@NullMarked
 package org.dependencytrack.metrics;
+
+import org.jspecify.annotations.NullMarked;

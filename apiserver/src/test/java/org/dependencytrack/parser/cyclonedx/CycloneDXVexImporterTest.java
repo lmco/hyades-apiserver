@@ -18,19 +18,17 @@
  */
 package org.dependencytrack.parser.cyclonedx;
 
+import org.apache.commons.io.IOUtils;
 import org.assertj.core.api.Assertions;
 import org.cyclonedx.parsers.BomParserFactory;
 import org.dependencytrack.PersistenceCapableTest;
 import org.dependencytrack.model.Analysis;
 import org.dependencytrack.model.AnalysisJustification;
 import org.dependencytrack.model.AnalysisState;
-import org.dependencytrack.model.AnalyzerIdentity;
 import org.dependencytrack.model.Component;
 import org.dependencytrack.model.Severity;
 import org.dependencytrack.model.Vulnerability;
-import org.junit.Assert;
-import org.junit.Test;
-import org.testcontainers.shaded.org.apache.commons.io.IOUtils;
+import org.junit.jupiter.api.Test;
 
 import javax.jdo.Query;
 import java.util.Arrays;
@@ -66,7 +64,7 @@ public class CycloneDXVexImporterTest extends PersistenceCapableTest {
         unknownVexSourceVulnerability.setSeverity(Severity.HIGH);
         unknownVexSourceVulnerability.setComponents(List.of(component));
         unknownVexSourceVulnerability = qm.createVulnerability(unknownVexSourceVulnerability, false);
-        qm.addVulnerability(unknownVexSourceVulnerability, component, AnalyzerIdentity.NONE);
+        qm.addVulnerability(unknownVexSourceVulnerability, component, "none");
 
         var mismatchVexSourceVulnerability = new Vulnerability();
         mismatchVexSourceVulnerability.setVulnId("CVE-2020-25650");
@@ -74,7 +72,7 @@ public class CycloneDXVexImporterTest extends PersistenceCapableTest {
         mismatchVexSourceVulnerability.setSeverity(Severity.HIGH);
         mismatchVexSourceVulnerability.setComponents(List.of(component));
         mismatchVexSourceVulnerability = qm.createVulnerability(mismatchVexSourceVulnerability, false);
-        qm.addVulnerability(mismatchVexSourceVulnerability, component, AnalyzerIdentity.NONE);
+        qm.addVulnerability(mismatchVexSourceVulnerability, component, "none");
 
         var noVexSourceVulnerability = new Vulnerability();
         noVexSourceVulnerability.setVulnId("CVE-2020-25651");
@@ -82,7 +80,7 @@ public class CycloneDXVexImporterTest extends PersistenceCapableTest {
         noVexSourceVulnerability.setSeverity(Severity.HIGH);
         noVexSourceVulnerability.setComponents(List.of(component));
         noVexSourceVulnerability = qm.createVulnerability(noVexSourceVulnerability, false);
-        qm.addVulnerability(noVexSourceVulnerability, component, AnalyzerIdentity.NONE);
+        qm.addVulnerability(noVexSourceVulnerability, component, "none");
 
         // Build vulnerabilities for each available and known vulnerability source
         for (var source : sources) {
@@ -93,7 +91,7 @@ public class CycloneDXVexImporterTest extends PersistenceCapableTest {
             vulnerability.setSeverity(Severity.HIGH);
             vulnerability.setComponents(List.of(component));
             vulnerability = qm.createVulnerability(vulnerability, false);
-            qm.addVulnerability(vulnerability, component, AnalyzerIdentity.NONE);
+            qm.addVulnerability(vulnerability, component, "none");
 
             var audit = new org.cyclonedx.model.vulnerability.Vulnerability();
             audit.setBomRef(UUID.randomUUID().toString());
@@ -121,12 +119,11 @@ public class CycloneDXVexImporterTest extends PersistenceCapableTest {
         final Query<Analysis> query = qm.getPersistenceManager().newQuery(Analysis.class, "project == :project");
         var analyses = (List<Analysis>) query.execute(project);
         // CVE-2020-256[49|50|51] are not audited otherwise analyses.size would have been equal to sources.size()+3
-        Assert.assertEquals(sources.size(), analyses.size());
+        org.junit.jupiter.api.Assertions.assertEquals(sources.size(), analyses.size());
         Assertions.assertThat(analyses).allSatisfy(analysis -> {
             Assertions.assertThat(analysis.getVulnerability().getVulnId()).isNotEqualTo("CVE-2020-25649");
             Assertions.assertThat(analysis.getVulnerability().getVulnId()).isNotEqualTo("CVE-2020-25650");
             Assertions.assertThat(analysis.isSuppressed()).isTrue();
-            Assertions.assertThat(analysis.getAnalysisComments().size()).isEqualTo(3);
             Assertions.assertThat(analysis.getAnalysisComments()).satisfiesExactlyInAnyOrder(comment -> {
                 Assertions.assertThat(comment.getCommenter()).isEqualTo("CycloneDX VEX");
                 Assertions.assertThat(comment.getComment()).isEqualTo(String.format("Analysis: %s → %s", AnalysisState.NOT_SET, AnalysisState.FALSE_POSITIVE));
@@ -136,6 +133,9 @@ public class CycloneDXVexImporterTest extends PersistenceCapableTest {
             }, comment -> {
                 Assertions.assertThat(comment.getCommenter()).isEqualTo("CycloneDX VEX");
                 Assertions.assertThat(comment.getComment()).isEqualTo(String.format("Justification: %s → %s", AnalysisJustification.NOT_SET, AnalysisJustification.PROTECTED_BY_MITIGATING_CONTROL));
+            }, comment -> {
+                Assertions.assertThat(comment.getCommenter()).isEqualTo("CycloneDX VEX");
+                Assertions.assertThat(comment.getComment()).isEqualTo("Suppressed");
             });
             Assertions.assertThat(analysis.getAnalysisDetails()).isEqualTo("Unit test");
         });

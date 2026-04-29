@@ -19,7 +19,7 @@
 package org.dependencytrack.resources.v1;
 
 import alpine.model.ManagedUser;
-import alpine.server.auth.JsonWebToken;
+import alpine.server.auth.SessionTokenService;
 import alpine.server.filters.ApiFilter;
 import alpine.server.filters.AuthenticationFeature;
 import alpine.server.filters.AuthorizationFeature;
@@ -29,59 +29,53 @@ import jakarta.json.JsonObject;
 import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
-import net.jcip.annotations.NotThreadSafe;
 import org.apache.http.HttpStatus;
-import org.dependencytrack.JerseyTestRule;
+import org.dependencytrack.JerseyTestExtension;
 import org.dependencytrack.ResourceTest;
 import org.dependencytrack.auth.Permissions;
-import org.dependencytrack.event.kafka.KafkaTopics;
 import org.dependencytrack.model.AnalysisJustification;
 import org.dependencytrack.model.AnalysisResponse;
 import org.dependencytrack.model.AnalysisState;
-import org.dependencytrack.model.AnalyzerIdentity;
 import org.dependencytrack.model.Component;
 import org.dependencytrack.model.Project;
 import org.dependencytrack.model.Severity;
 import org.dependencytrack.model.Vulnerability;
-import org.dependencytrack.notification.NotificationConstants;
-import org.dependencytrack.persistence.jdbi.AnalysisDao;
+import org.dependencytrack.notification.NotificationScope;
+import org.dependencytrack.persistence.command.MakeAnalysisCommand;
 import org.dependencytrack.persistence.jdbi.VulnerabilityPolicyDao;
+import org.dependencytrack.persistence.jdbi.VulnerabilityPolicyDao.VulnPolicyIdentityRow;
 import org.dependencytrack.policy.vulnerability.VulnerabilityPolicy;
 import org.dependencytrack.policy.vulnerability.VulnerabilityPolicyAnalysis;
-import org.dependencytrack.proto.notification.v1.Notification;
 import org.dependencytrack.resources.v1.vo.AnalysisRequest;
-import org.dependencytrack.util.NotificationUtil;
 import org.glassfish.jersey.server.ResourceConfig;
-import org.junit.ClassRule;
-import org.junit.Test;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
 
-import java.time.Duration;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Supplier;
 
 import static net.javacrumbs.jsonunit.assertj.JsonAssertions.assertThatJson;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.dependencytrack.assertion.Assertions.assertConditionWithTimeout;
+import static org.dependencytrack.notification.NotificationTestUtil.createCatchAllNotificationRule;
+import static org.dependencytrack.notification.proto.v1.Group.GROUP_PROJECT_AUDIT_CHANGE;
+import static org.dependencytrack.notification.proto.v1.Level.LEVEL_INFORMATIONAL;
+import static org.dependencytrack.notification.proto.v1.Scope.SCOPE_PORTFOLIO;
 import static org.dependencytrack.persistence.jdbi.JdbiFactory.useJdbiHandle;
 import static org.dependencytrack.persistence.jdbi.JdbiFactory.withJdbiHandle;
-import static org.dependencytrack.proto.notification.v1.Group.GROUP_PROJECT_AUDIT_CHANGE;
-import static org.dependencytrack.proto.notification.v1.Level.LEVEL_INFORMATIONAL;
-import static org.dependencytrack.proto.notification.v1.Scope.SCOPE_PORTFOLIO;
-import static org.dependencytrack.util.KafkaTestUtil.deserializeValue;
 
-@NotThreadSafe
-public class AnalysisResourceTest extends ResourceTest {
+class AnalysisResourceTest extends ResourceTest {
 
-    @ClassRule
-    public static JerseyTestRule jersey = new JerseyTestRule(
+    @RegisterExtension
+    static JerseyTestExtension jersey = new JerseyTestExtension(
             new ResourceConfig(AnalysisResource.class)
                     .register(ApiFilter.class)
                     .register(AuthenticationFeature.class)
                     .register(AuthorizationFeature.class));
 
     @Test
-    public void retrieveAnalysisTest() {
+    void retrieveAnalysisTest() {
         initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
 
         final Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
@@ -99,12 +93,18 @@ public class AnalysisResourceTest extends ResourceTest {
         vulnerability.setComponents(List.of(component));
         qm.createVulnerability(vulnerability, false);
 
-        var analysis = withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysis(project.getId(), component.getId(), vulnerability.getId(), AnalysisState.NOT_AFFECTED,
-                        AnalysisJustification.CODE_NOT_REACHABLE, AnalysisResponse.WILL_NOT_FIX, "Analysis details here", true));
-
-        withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysisComment(analysis.getId(), "Analysis comment here", "Jane Doe"));
+        qm.makeAnalysis(
+                new MakeAnalysisCommand(component, vulnerability)
+                        .withState(AnalysisState.NOT_AFFECTED)
+                        .withJustification(AnalysisJustification.CODE_NOT_REACHABLE)
+                        .withResponse(AnalysisResponse.WILL_NOT_FIX)
+                        .withDetails("Analysis details here")
+                        .withSuppress(true)
+                        .withCommenter("Jane Doe")
+                        .withComment("Analysis comment here")
+                        .withOptions(EnumSet.of(
+                                MakeAnalysisCommand.Option.OMIT_AUDIT_TRAIL,
+                                MakeAnalysisCommand.Option.OMIT_NOTIFICATION)));
 
         final Response response = jersey.target(V1_ANALYSIS)
                 .queryParam("project", project.getUuid())
@@ -130,7 +130,7 @@ public class AnalysisResourceTest extends ResourceTest {
     }
 
     @Test
-    public void retrieveAnalysisWithoutExistingAnalysisTest() {
+    void retrieveAnalysisWithoutExistingAnalysisTest() {
         initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
 
         final Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
@@ -161,7 +161,7 @@ public class AnalysisResourceTest extends ResourceTest {
     }
 
     @Test
-    public void noAnalysisExists() {
+    void noAnalysisExists() {
         initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
         final Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
 
@@ -189,7 +189,7 @@ public class AnalysisResourceTest extends ResourceTest {
     }
 
     @Test
-    public void retrieveAnalysisWithProjectNotFoundTest() {
+    void retrieveAnalysisWithProjectNotFoundTest() {
         initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
 
         final Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
@@ -220,7 +220,7 @@ public class AnalysisResourceTest extends ResourceTest {
     }
 
     @Test
-    public void retrieveAnalysisWithComponentNotFoundTest() {
+    void retrieveAnalysisWithComponentNotFoundTest() {
         initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
 
         final Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
@@ -251,7 +251,7 @@ public class AnalysisResourceTest extends ResourceTest {
     }
 
     @Test
-    public void retrieveAnalysisWithVulnerabilityNotFoundTest() {
+    void retrieveAnalysisWithVulnerabilityNotFoundTest() {
         initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
 
         final Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
@@ -282,7 +282,7 @@ public class AnalysisResourceTest extends ResourceTest {
     }
 
     @Test
-    public void retrieveAnalysisUnauthorizedTest() {
+    void retrieveAnalysisUnauthorizedTest() {
         final Response response = jersey.target(V1_ANALYSIS)
                 .queryParam("project", UUID.randomUUID())
                 .queryParam("component", UUID.randomUUID())
@@ -295,7 +295,7 @@ public class AnalysisResourceTest extends ResourceTest {
     }
 
     @Test
-    public void retrieveAnalysisWithAclTest() {
+    void retrieveAnalysisWithAclTest() {
         enablePortfolioAccessControl();
 
         initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
@@ -314,9 +314,13 @@ public class AnalysisResourceTest extends ResourceTest {
         vuln.setSource(Vulnerability.Source.INTERNAL);
         qm.persist(vuln);
 
-        withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysis(project.getId(), component.getId(), vuln.getId(), AnalysisState.NOT_AFFECTED, AnalysisJustification.CODE_NOT_REACHABLE,
-                        AnalysisResponse.WILL_NOT_FIX, "Analysis details here", true));
+        qm.makeAnalysis(
+                new MakeAnalysisCommand(component, vuln)
+                        .withState(AnalysisState.NOT_AFFECTED)
+                        .withJustification(AnalysisJustification.CODE_NOT_REACHABLE)
+                        .withResponse(AnalysisResponse.WILL_NOT_FIX)
+                        .withDetails("Analysis details here")
+                        .withSuppress(true));
 
         final Supplier<Response> responseSupplier = () -> jersey
                 .target(V1_ANALYSIS)
@@ -345,7 +349,9 @@ public class AnalysisResourceTest extends ResourceTest {
     }
 
     @Test
-    public void updateAnalysisCreateNewTest() throws Exception {
+    void updateAnalysisCreateNewTest() {
+        createCatchAllNotificationRule(qm, NotificationScope.PORTFOLIO);
+
         initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS);
 
         final Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
@@ -380,33 +386,44 @@ public class AnalysisResourceTest extends ResourceTest {
         assertThat(responseJson.getString("analysisJustification")).isEqualTo(AnalysisJustification.CODE_NOT_REACHABLE.name());
         assertThat(responseJson.getString("analysisResponse")).isEqualTo(AnalysisResponse.WILL_NOT_FIX.name());
         assertThat(responseJson.getString("analysisDetails")).isEqualTo("Analysis details here");
-        assertThat(responseJson.getJsonArray("analysisComments")).hasSize(2);
+        assertThat(responseJson.getJsonArray("analysisComments")).hasSize(6);
         assertThat(responseJson.getJsonArray("analysisComments").getJsonObject(0))
                 .hasFieldOrPropertyWithValue("comment", Json.createValue("Analysis: NOT_SET → NOT_AFFECTED"))
                 .hasFieldOrPropertyWithValue("commenter", Json.createValue("Test Users"));
         assertThat(responseJson.getJsonArray("analysisComments").getJsonObject(1))
+                .hasFieldOrPropertyWithValue("comment", Json.createValue("Justification: NOT_SET → CODE_NOT_REACHABLE"))
+                .hasFieldOrPropertyWithValue("commenter", Json.createValue("Test Users"));
+        assertThat(responseJson.getJsonArray("analysisComments").getJsonObject(2))
+                .hasFieldOrPropertyWithValue("comment", Json.createValue("Vendor Response: NOT_SET → WILL_NOT_FIX"))
+                .hasFieldOrPropertyWithValue("commenter", Json.createValue("Test Users"));
+        assertThat(responseJson.getJsonArray("analysisComments").getJsonObject(3))
+                .hasFieldOrPropertyWithValue("comment", Json.createValue("Details: Analysis details here"))
+                .hasFieldOrPropertyWithValue("commenter", Json.createValue("Test Users"));
+        assertThat(responseJson.getJsonArray("analysisComments").getJsonObject(4))
+                .hasFieldOrPropertyWithValue("comment", Json.createValue("Suppressed"))
+                .hasFieldOrPropertyWithValue("commenter", Json.createValue("Test Users"));
+        assertThat(responseJson.getJsonArray("analysisComments").getJsonObject(5))
                 .hasFieldOrPropertyWithValue("comment", Json.createValue("Analysis comment here"))
                 .hasFieldOrPropertyWithValue("commenter", Json.createValue("Test Users"));
         assertThat(responseJson.getBoolean("isSuppressed")).isTrue();
 
-        assertConditionWithTimeout(() -> kafkaMockProducer.history().size() == 2, Duration.ofSeconds(5));
-        final Notification projectNotification = deserializeValue(KafkaTopics.NOTIFICATION_PROJECT_CREATED, kafkaMockProducer.history().get(0));
-        assertThat(projectNotification).isNotNull();
-        final Notification notification = deserializeValue(KafkaTopics.NOTIFICATION_PROJECT_AUDIT_CHANGE, kafkaMockProducer.history().get(1));
-        assertThat(notification).isNotNull();
-        assertThat(notification.getScope()).isEqualTo(SCOPE_PORTFOLIO);
-        assertThat(notification.getGroup()).isEqualTo(GROUP_PROJECT_AUDIT_CHANGE);
-        assertThat(notification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
-        assertThat(notification.getTitle()).isEqualTo(NotificationUtil.generateNotificationTitle(NotificationConstants.Title.ANALYSIS_DECISION_NOT_AFFECTED, project));
-        assertThat(notification.getContent()).isEqualTo("An analysis decision was made to a finding affecting a project");
+        assertThat(qm.getNotificationOutbox()).satisfiesExactly(notification -> {
+            assertThat(notification.getScope()).isEqualTo(SCOPE_PORTFOLIO);
+            assertThat(notification.getGroup()).isEqualTo(GROUP_PROJECT_AUDIT_CHANGE);
+            assertThat(notification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
+            assertThat(notification.getTitle()).isEqualTo("Analysis Decision: NOT_AFFECTED");
+            assertThat(notification.getContent()).isEqualTo("An analysis decision was made to a finding affecting a project");
+        });
     }
 
     @Test
-    public void updateAnalysisCreateNewWithUserTest() throws Exception {
+    void updateAnalysisCreateNewWithUserTest() {
+        createCatchAllNotificationRule(qm, NotificationScope.PORTFOLIO);
+
         initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS);
 
         ManagedUser testUser = qm.createManagedUser("testuser", TEST_USER_PASSWORD_HASH);
-        String jwt = new JsonWebToken().createToken(testUser);
+        String sessionToken = new SessionTokenService().createSession(testUser.getId());
         qm.addUserToTeam(testUser, team);
 
         final Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
@@ -430,7 +447,7 @@ public class AnalysisResourceTest extends ResourceTest {
 
         final Response response = jersey.target(V1_ANALYSIS)
                 .request()
-                .header("Authorization", "Bearer " + jwt)
+                .header("Authorization", "Bearer " + sessionToken)
                 .put(Entity.entity(analysisRequest, MediaType.APPLICATION_JSON));
         assertThat(response.getStatus()).isEqualTo(HttpStatus.SC_OK);
         assertThat(response.getHeaderString(TOTAL_COUNT_HEADER)).isNull();
@@ -441,29 +458,38 @@ public class AnalysisResourceTest extends ResourceTest {
         assertThat(responseJson.getString("analysisJustification")).isEqualTo(AnalysisJustification.CODE_NOT_REACHABLE.name());
         assertThat(responseJson.getString("analysisResponse")).isEqualTo(AnalysisResponse.WILL_NOT_FIX.name());
         assertThat(responseJson.getString("analysisDetails")).isEqualTo("Analysis details here");
-        assertThat(responseJson.getJsonArray("analysisComments")).hasSize(2);
+        assertThat(responseJson.getJsonArray("analysisComments")).hasSize(6);
         assertThat(responseJson.getJsonArray("analysisComments").getJsonObject(0))
                 .hasFieldOrPropertyWithValue("comment", Json.createValue("Analysis: NOT_SET → NOT_AFFECTED"))
                 .hasFieldOrPropertyWithValue("commenter", Json.createValue("testuser"));
         assertThat(responseJson.getJsonArray("analysisComments").getJsonObject(1))
+                .hasFieldOrPropertyWithValue("comment", Json.createValue("Justification: NOT_SET → CODE_NOT_REACHABLE"))
+                .hasFieldOrPropertyWithValue("commenter", Json.createValue("testuser"));
+        assertThat(responseJson.getJsonArray("analysisComments").getJsonObject(2))
+                .hasFieldOrPropertyWithValue("comment", Json.createValue("Vendor Response: NOT_SET → WILL_NOT_FIX"))
+                .hasFieldOrPropertyWithValue("commenter", Json.createValue("testuser"));
+        assertThat(responseJson.getJsonArray("analysisComments").getJsonObject(3))
+                .hasFieldOrPropertyWithValue("comment", Json.createValue("Details: Analysis details here"))
+                .hasFieldOrPropertyWithValue("commenter", Json.createValue("testuser"));
+        assertThat(responseJson.getJsonArray("analysisComments").getJsonObject(4))
+                .hasFieldOrPropertyWithValue("comment", Json.createValue("Suppressed"))
+                .hasFieldOrPropertyWithValue("commenter", Json.createValue("testuser"));
+        assertThat(responseJson.getJsonArray("analysisComments").getJsonObject(5))
                 .hasFieldOrPropertyWithValue("comment", Json.createValue("Analysis comment here"))
                 .hasFieldOrPropertyWithValue("commenter", Json.createValue("testuser"));
         assertThat(responseJson.getBoolean("isSuppressed")).isTrue();
 
-        assertConditionWithTimeout(() -> kafkaMockProducer.history().size() == 2, Duration.ofSeconds(5));
-        final Notification projectNotification = deserializeValue(KafkaTopics.NOTIFICATION_PROJECT_CREATED, kafkaMockProducer.history().get(0));
-        assertThat(projectNotification).isNotNull();
-        final Notification notification = deserializeValue(KafkaTopics.NOTIFICATION_PROJECT_AUDIT_CHANGE, kafkaMockProducer.history().get(1));
-        assertThat(notification).isNotNull();
-        assertThat(notification.getScope()).isEqualTo(SCOPE_PORTFOLIO);
-        assertThat(notification.getGroup()).isEqualTo(GROUP_PROJECT_AUDIT_CHANGE);
-        assertThat(notification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
-        assertThat(notification.getTitle()).isEqualTo(NotificationUtil.generateNotificationTitle(NotificationConstants.Title.ANALYSIS_DECISION_NOT_AFFECTED, project));
-        assertThat(notification.getContent()).isEqualTo("An analysis decision was made to a finding affecting a project");
+        assertThat(qm.getNotificationOutbox()).satisfiesExactly(notification -> {
+            assertThat(notification.getScope()).isEqualTo(SCOPE_PORTFOLIO);
+            assertThat(notification.getGroup()).isEqualTo(GROUP_PROJECT_AUDIT_CHANGE);
+            assertThat(notification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
+            assertThat(notification.getTitle()).isEqualTo("Analysis Decision: NOT_AFFECTED");
+            assertThat(notification.getContent()).isEqualTo("An analysis decision was made to a finding affecting a project");
+        });
     }
 
     @Test
-    public void updateAnalysisCreateNewWithEmptyRequestTest() throws Exception {
+    void updateAnalysisCreateNewWithEmptyRequestTest() {
         initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS);
 
         final Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
@@ -500,20 +526,13 @@ public class AnalysisResourceTest extends ResourceTest {
         assertThat(responseJson.getJsonArray("analysisComments")).isEmpty();
         assertThat(responseJson.getBoolean("isSuppressed")).isFalse();
 
-        assertConditionWithTimeout(() -> kafkaMockProducer.history().size() == 2, Duration.ofSeconds(5));
-        final Notification projectNotification = deserializeValue(KafkaTopics.NOTIFICATION_PROJECT_CREATED, kafkaMockProducer.history().get(0));
-        assertThat(projectNotification).isNotNull();
-        final Notification notification = deserializeValue(KafkaTopics.NOTIFICATION_PROJECT_AUDIT_CHANGE, kafkaMockProducer.history().get(1));
-        assertThat(notification).isNotNull();
-        assertThat(notification.getScope()).isEqualTo(SCOPE_PORTFOLIO);
-        assertThat(notification.getGroup()).isEqualTo(GROUP_PROJECT_AUDIT_CHANGE);
-        assertThat(notification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
-        assertThat(notification.getTitle()).isEqualTo(NotificationUtil.generateNotificationTitle(NotificationConstants.Title.ANALYSIS_DECISION_NOT_SET, project));
-        assertThat(notification.getContent()).isEqualTo("An analysis decision was made to a finding affecting a project");
+        assertThat(qm.getNotificationOutbox()).isEmpty();
     }
 
     @Test
-    public void updateAnalysisUpdateExistingTest() throws Exception {
+    void updateAnalysisUpdateExistingTest() {
+        createCatchAllNotificationRule(qm, NotificationScope.PORTFOLIO);
+
         initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS);
 
         final Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
@@ -531,12 +550,18 @@ public class AnalysisResourceTest extends ResourceTest {
         vulnerability.setComponents(List.of(component));
         qm.createVulnerability(vulnerability, false);
 
-        var analysis = withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysis(project.getId(), component.getId(), vulnerability.getId(), AnalysisState.NOT_AFFECTED, AnalysisJustification.CODE_NOT_REACHABLE,
-                        AnalysisResponse.WILL_NOT_FIX, "Analysis details here", true));
-
-        withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysisComment(analysis.getId(), "Analysis comment here", "Jane Doe"));
+        qm.makeAnalysis(
+                new MakeAnalysisCommand(component, vulnerability)
+                        .withState(AnalysisState.NOT_AFFECTED)
+                        .withJustification(AnalysisJustification.CODE_NOT_REACHABLE)
+                        .withResponse(AnalysisResponse.WILL_NOT_FIX)
+                        .withDetails("Analysis details here")
+                        .withSuppress(true)
+                        .withCommenter("Jane Doe")
+                        .withComment("Analysis comment here")
+                        .withOptions(EnumSet.of(
+                                MakeAnalysisCommand.Option.OMIT_AUDIT_TRAIL,
+                                MakeAnalysisCommand.Option.OMIT_NOTIFICATION)));
 
         final var analysisRequest = new AnalysisRequest(project.getUuid().toString(), component.getUuid().toString(),
                 vulnerability.getUuid().toString(), AnalysisState.EXPLOITABLE, AnalysisJustification.NOT_SET,
@@ -581,20 +606,17 @@ public class AnalysisResourceTest extends ResourceTest {
                 .hasFieldOrPropertyWithValue("commenter", Json.createValue("Test Users"));
         assertThat(responseJson.getBoolean("isSuppressed")).isFalse();
 
-        assertConditionWithTimeout(() -> kafkaMockProducer.history().size() == 2, Duration.ofSeconds(5));
-        final Notification projectNotification = deserializeValue(KafkaTopics.NOTIFICATION_PROJECT_CREATED, kafkaMockProducer.history().get(0));
-        assertThat(projectNotification).isNotNull();
-        final Notification notification = deserializeValue(KafkaTopics.NOTIFICATION_PROJECT_AUDIT_CHANGE, kafkaMockProducer.history().get(1));
-        assertThat(notification).isNotNull();
-        assertThat(notification.getScope()).isEqualTo(SCOPE_PORTFOLIO);
-        assertThat(notification.getGroup()).isEqualTo(GROUP_PROJECT_AUDIT_CHANGE);
-        assertThat(notification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
-        assertThat(notification.getTitle()).isEqualTo(NotificationUtil.generateNotificationTitle(NotificationConstants.Title.ANALYSIS_DECISION_EXPLOITABLE, project));
-        assertThat(notification.getContent()).isEqualTo("An analysis decision was made to a finding affecting a project");
+        assertThat(qm.getNotificationOutbox()).satisfiesExactly(notification -> {
+            assertThat(notification.getScope()).isEqualTo(SCOPE_PORTFOLIO);
+            assertThat(notification.getGroup()).isEqualTo(GROUP_PROJECT_AUDIT_CHANGE);
+            assertThat(notification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
+            assertThat(notification.getTitle()).isEqualTo("Analysis Decision: EXPLOITABLE");
+            assertThat(notification.getContent()).isEqualTo("An analysis decision was made to a finding affecting a project");
+        });
     }
 
     @Test
-    public void updateAnalysisWithNoChangesTest() throws Exception {
+    void updateAnalysisWithNoChangesTest() {
         initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS);
 
         final Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
@@ -612,12 +634,18 @@ public class AnalysisResourceTest extends ResourceTest {
         vulnerability.setComponents(List.of(component));
         qm.createVulnerability(vulnerability, false);
 
-        var analysis = withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysis(project.getId(), component.getId(), vulnerability.getId(), AnalysisState.NOT_AFFECTED, AnalysisJustification.CODE_NOT_REACHABLE,
-                        AnalysisResponse.WILL_NOT_FIX, "Analysis details here", true));
-
-        withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysisComment(analysis.getId(), "Analysis comment here", "Jane Doe"));
+        qm.makeAnalysis(
+                new MakeAnalysisCommand(component, vulnerability)
+                        .withState(AnalysisState.NOT_AFFECTED)
+                        .withJustification(AnalysisJustification.CODE_NOT_REACHABLE)
+                        .withResponse(AnalysisResponse.WILL_NOT_FIX)
+                        .withDetails("Analysis details here")
+                        .withSuppress(true)
+                        .withCommenter("Jane Doe")
+                        .withComment("Analysis comment here")
+                        .withOptions(EnumSet.of(
+                                MakeAnalysisCommand.Option.OMIT_AUDIT_TRAIL,
+                                MakeAnalysisCommand.Option.OMIT_NOTIFICATION)));
 
         final var analysisRequest = new AnalysisRequest(project.getUuid().toString(), component.getUuid().toString(),
                 vulnerability.getUuid().toString(), AnalysisState.NOT_AFFECTED, AnalysisJustification.CODE_NOT_REACHABLE,
@@ -643,11 +671,13 @@ public class AnalysisResourceTest extends ResourceTest {
                 .hasFieldOrPropertyWithValue("comment", Json.createValue("Analysis comment here"))
                 .hasFieldOrPropertyWithValue("commenter", Json.createValue("Jane Doe"));
 
-        assertConditionWithTimeout(() -> kafkaMockProducer.history().size() == 1, Duration.ofSeconds(5));
+        assertThat(qm.getNotificationOutbox()).isEmpty();
     }
 
     @Test
-    public void updateAnalysisUpdateExistingWithEmptyRequestTest() throws Exception {
+    void updateAnalysisUpdateExistingWithEmptyRequestTest() {
+        createCatchAllNotificationRule(qm, NotificationScope.PORTFOLIO);
+
         initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS);
 
         final Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
@@ -665,12 +695,18 @@ public class AnalysisResourceTest extends ResourceTest {
         vulnerability.setComponents(List.of(component));
         qm.createVulnerability(vulnerability, false);
 
-        var analysis = withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysis(project.getId(), component.getId(), vulnerability.getId(), AnalysisState.NOT_AFFECTED, AnalysisJustification.CODE_NOT_REACHABLE,
-                        AnalysisResponse.WILL_NOT_FIX, "Analysis details here", true));
-
-        withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysisComment(analysis.getId(), "Analysis comment here", "Jane Doe"));
+        qm.makeAnalysis(
+                new MakeAnalysisCommand(component, vulnerability)
+                        .withState(AnalysisState.NOT_AFFECTED)
+                        .withJustification(AnalysisJustification.CODE_NOT_REACHABLE)
+                        .withResponse(AnalysisResponse.WILL_NOT_FIX)
+                        .withDetails("Analysis details here")
+                        .withSuppress(true)
+                        .withCommenter("Jane Doe")
+                        .withComment("Analysis comment here")
+                        .withOptions(EnumSet.of(
+                                MakeAnalysisCommand.Option.OMIT_AUDIT_TRAIL,
+                                MakeAnalysisCommand.Option.OMIT_NOTIFICATION)));
 
         final var analysisRequest = new AnalysisRequest(project.getUuid().toString(), component.getUuid().toString(),
                 vulnerability.getUuid().toString(), null, null, null, null, null, null);
@@ -704,52 +740,17 @@ public class AnalysisResourceTest extends ResourceTest {
                 .hasFieldOrPropertyWithValue("comment", Json.createValue("Vendor Response: WILL_NOT_FIX → NOT_SET"))
                 .hasFieldOrPropertyWithValue("commenter", Json.createValue("Test Users"));
 
-        assertConditionWithTimeout(() -> kafkaMockProducer.history().size() == 2, Duration.ofSeconds(5));
-        final Notification projectNotification = deserializeValue(KafkaTopics.NOTIFICATION_PROJECT_CREATED, kafkaMockProducer.history().get(0));
-        assertThat(projectNotification).isNotNull();
-        final Notification notification = deserializeValue(KafkaTopics.NOTIFICATION_PROJECT_AUDIT_CHANGE, kafkaMockProducer.history().get(1));
-        assertThat(notification).isNotNull();
-        assertThat(notification.getScope()).isEqualTo(SCOPE_PORTFOLIO);
-        assertThat(notification.getGroup()).isEqualTo(GROUP_PROJECT_AUDIT_CHANGE);
-        assertThat(notification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
-        assertThat(notification.getTitle()).isEqualTo(NotificationUtil.generateNotificationTitle(NotificationConstants.Title.ANALYSIS_DECISION_NOT_SET, project));
-        assertThat(notification.getContent()).isEqualTo("An analysis decision was made to a finding affecting a project");
+        assertThat(qm.getNotificationOutbox()).satisfiesExactly(notification -> {
+            assertThat(notification.getScope()).isEqualTo(SCOPE_PORTFOLIO);
+            assertThat(notification.getGroup()).isEqualTo(GROUP_PROJECT_AUDIT_CHANGE);
+            assertThat(notification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
+            assertThat(notification.getTitle()).isEqualTo("Analysis Decision: NOT_SET");
+            assertThat(notification.getContent()).isEqualTo("An analysis decision was made to a finding affecting a project");
+        });
     }
 
     @Test
-    public void updateAnalysisWithProjectNotFoundTest() {
-        initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS);
-
-        final Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
-
-        var component = new Component();
-        component.setProject(project);
-        component.setName("Acme Component");
-        component.setVersion("1.0");
-        component = qm.createComponent(component, false);
-
-        var vulnerability = new Vulnerability();
-        vulnerability.setVulnId("INT-001");
-        vulnerability.setSource(Vulnerability.Source.INTERNAL);
-        vulnerability.setSeverity(Severity.HIGH);
-        vulnerability.setComponents(List.of(component));
-        vulnerability = qm.createVulnerability(vulnerability, false);
-
-        final var analysisRequest = new AnalysisRequest(UUID.randomUUID().toString(), component.getUuid().toString(),
-                vulnerability.getUuid().toString(), AnalysisState.NOT_AFFECTED, AnalysisJustification.CODE_NOT_REACHABLE,
-                AnalysisResponse.WILL_NOT_FIX, "Analysis details here", "Analysis comment here", true);
-
-        final Response response = jersey.target(V1_ANALYSIS)
-                .request()
-                .header(X_API_KEY, apiKey)
-                .put(Entity.entity(analysisRequest, MediaType.APPLICATION_JSON));
-        assertThat(response.getStatus()).isEqualTo(HttpStatus.SC_NOT_FOUND);
-        assertThat(response.getHeaderString(TOTAL_COUNT_HEADER)).isNull();
-        assertThat(getPlainTextBody(response)).isEqualTo("The project could not be found.");
-    }
-
-    @Test
-    public void updateAnalysisWithComponentNotFoundTest() {
+    void updateAnalysisWithComponentNotFoundTest() {
         initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS);
 
         final Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
@@ -781,7 +782,7 @@ public class AnalysisResourceTest extends ResourceTest {
     }
 
     @Test
-    public void updateAnalysisWithVulnerabilityNotFoundTest() {
+    void updateAnalysisWithVulnerabilityNotFoundTest() {
         initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS);
 
         final Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
@@ -817,7 +818,9 @@ public class AnalysisResourceTest extends ResourceTest {
     // Performing an analysis with those request fields set in >= 4.4.0 then resulted in NPEs,
     // see https://github.com/DependencyTrack/dependency-track/issues/1409
     @Test
-    public void updateAnalysisIssue1409Test() throws InterruptedException {
+    void updateAnalysisIssue1409Test() {
+        createCatchAllNotificationRule(qm, NotificationScope.PORTFOLIO);
+
         initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS);
 
         final Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
@@ -835,8 +838,12 @@ public class AnalysisResourceTest extends ResourceTest {
         vulnerability.setComponents(List.of(component));
         qm.createVulnerability(vulnerability, false);
 
-        withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysis(project.getId(), component.getId(), vulnerability.getId(), AnalysisState.IN_TRIAGE, null, null, null, false));
+        qm.makeAnalysis(
+                new MakeAnalysisCommand(component, vulnerability)
+                        .withState(AnalysisState.IN_TRIAGE)
+                        .withOptions(EnumSet.of(
+                                MakeAnalysisCommand.Option.OMIT_AUDIT_TRAIL,
+                                MakeAnalysisCommand.Option.OMIT_NOTIFICATION)));
 
         final var analysisRequest = new AnalysisRequest(project.getUuid().toString(), component.getUuid().toString(),
                 vulnerability.getUuid().toString(), AnalysisState.NOT_AFFECTED, AnalysisJustification.PROTECTED_BY_MITIGATING_CONTROL,
@@ -875,20 +882,17 @@ public class AnalysisResourceTest extends ResourceTest {
                 .hasFieldOrPropertyWithValue("commenter", Json.createValue("Test Users"));
         assertThat(responseJson.getBoolean("isSuppressed")).isFalse();
 
-        assertConditionWithTimeout(() -> kafkaMockProducer.history().size() == 2, Duration.ofSeconds(5));
-        final Notification projectNotification = deserializeValue(KafkaTopics.NOTIFICATION_PROJECT_CREATED, kafkaMockProducer.history().get(0));
-        assertThat(projectNotification).isNotNull();
-        final Notification notification = deserializeValue(KafkaTopics.NOTIFICATION_PROJECT_AUDIT_CHANGE, kafkaMockProducer.history().get(1));
-        assertThat(notification).isNotNull();
-        assertThat(notification.getScope()).isEqualTo(SCOPE_PORTFOLIO);
-        assertThat(notification.getGroup()).isEqualTo(GROUP_PROJECT_AUDIT_CHANGE);
-        assertThat(notification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
-        assertThat(notification.getTitle()).isEqualTo(NotificationUtil.generateNotificationTitle(NotificationConstants.Title.ANALYSIS_DECISION_NOT_AFFECTED, project));
-        assertThat(notification.getContent()).isEqualTo("An analysis decision was made to a finding affecting a project");
+        assertThat(qm.getNotificationOutbox()).satisfiesExactly(notification -> {
+            assertThat(notification.getScope()).isEqualTo(SCOPE_PORTFOLIO);
+            assertThat(notification.getGroup()).isEqualTo(GROUP_PROJECT_AUDIT_CHANGE);
+            assertThat(notification.getLevel()).isEqualTo(LEVEL_INFORMATIONAL);
+            assertThat(notification.getTitle()).isEqualTo("Analysis Decision: NOT_AFFECTED");
+            assertThat(notification.getContent()).isEqualTo("An analysis decision was made to a finding affecting a project");
+        });
     }
 
     @Test
-    public void updateAnalysisUnauthorizedTest() {
+    void updateAnalysisUnauthorizedTest() {
         final var analysisRequest = new AnalysisRequest(UUID.randomUUID().toString(), UUID.randomUUID().toString(),
                 UUID.randomUUID().toString(), AnalysisState.NOT_AFFECTED, AnalysisJustification.PROTECTED_BY_MITIGATING_CONTROL,
                 AnalysisResponse.UPDATE, "Analysis details here", "Analysis comment here", false);
@@ -902,7 +906,7 @@ public class AnalysisResourceTest extends ResourceTest {
     }
 
     @Test
-    public void updateAnalysisWithAclTest() {
+    void updateAnalysisWithAclTest() {
         enablePortfolioAccessControl();
 
         initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS);
@@ -953,7 +957,7 @@ public class AnalysisResourceTest extends ResourceTest {
     }
 
     @Test
-    public void updateAnalysisWithAssociatedVulnerabilityPolicyTest() {
+    void updateAnalysisWithAssociatedVulnerabilityPolicyTest() {
         initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS);
 
         final var project = new Project();
@@ -970,18 +974,20 @@ public class AnalysisResourceTest extends ResourceTest {
         vuln.setSource(Vulnerability.Source.NVD);
         qm.persist(vuln);
 
-        qm.addVulnerability(vuln, component, AnalyzerIdentity.INTERNAL_ANALYZER);
-        var analysis = withJdbiHandle(handle -> handle.attach(AnalysisDao.class)
-                .makeAnalysis(project.getId(), component.getId(), vuln.getId(), AnalysisState.NOT_AFFECTED, null, null, null, true));
+        qm.addVulnerability(vuln, component, "internal");
+        final long analysisId = qm.makeAnalysis(
+                new MakeAnalysisCommand(component, vuln)
+                        .withState(AnalysisState.NOT_AFFECTED)
+                        .withSuppress(true));
 
-        final VulnerabilityPolicy vulnPolicy = withJdbiHandle(handle -> {
+        final VulnPolicyIdentityRow vulnPolicy = withJdbiHandle(handle -> {
             final var policyAnalysis = new VulnerabilityPolicyAnalysis();
             policyAnalysis.setState(VulnerabilityPolicyAnalysis.State.EXPLOITABLE);
 
             final var policy = new VulnerabilityPolicy();
             policy.setName("foo");
             policy.setAnalysis(policyAnalysis);
-            policy.setConditions(List.of("true"));
+            policy.setCondition("true");
             return handle.attach(VulnerabilityPolicyDao.class).create(policy);
         });
 
@@ -995,8 +1001,8 @@ public class AnalysisResourceTest extends ResourceTest {
                            SET "VULNERABILITY_POLICY_ID" = (SELECT "ID" FROM "VULN_POLICY")
                          WHERE "ID" = :analysisId
                         """)
-                .bind("policyName", vulnPolicy.getName())
-                .bind("analysisId", analysis.getId())
+                .bind("policyName", vulnPolicy.name())
+                .bind("analysisId", analysisId)
                 .execute());
 
         final Response response = jersey.target(V1_ANALYSIS)

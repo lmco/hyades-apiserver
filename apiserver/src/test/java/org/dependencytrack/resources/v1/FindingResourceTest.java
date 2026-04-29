@@ -18,67 +18,99 @@
  */
 package org.dependencytrack.resources.v1;
 
-import alpine.Config;
+import alpine.config.AlpineConfigKeys;
 import alpine.model.About;
 import alpine.model.ApiKey;
 import alpine.model.ConfigProperty;
 import alpine.model.Team;
 import alpine.server.filters.ApiFilter;
 import alpine.server.filters.AuthenticationFeature;
+import alpine.server.filters.AuthorizationFeature;
 import jakarta.json.JsonArray;
 import jakarta.json.JsonObject;
 import jakarta.ws.rs.client.Entity;
 import jakarta.ws.rs.core.HttpHeaders;
 import jakarta.ws.rs.core.Response;
-import org.dependencytrack.JerseyTestRule;
+import org.dependencytrack.JerseyTestExtension;
 import org.dependencytrack.ResourceTest;
+import org.dependencytrack.auth.Permissions;
+import org.dependencytrack.dex.engine.api.DexEngine;
+import org.dependencytrack.dex.engine.api.request.CreateWorkflowRunRequest;
 import org.dependencytrack.model.Analysis;
 import org.dependencytrack.model.AnalysisState;
-import org.dependencytrack.model.AnalyzerIdentity;
 import org.dependencytrack.model.Component;
 import org.dependencytrack.model.ComponentOccurrence;
 import org.dependencytrack.model.ConfigPropertyConstants;
+import org.dependencytrack.model.Epss;
+import org.dependencytrack.model.PackageMetadata;
 import org.dependencytrack.model.Project;
-import org.dependencytrack.model.RepositoryMetaComponent;
-import org.dependencytrack.model.RepositoryType;
 import org.dependencytrack.model.Severity;
 import org.dependencytrack.model.Vulnerability;
-import org.dependencytrack.model.WorkflowStep;
-import org.dependencytrack.persistence.jdbi.AnalysisDao;
+import org.dependencytrack.persistence.command.MakeAnalysisCommand;
+import org.dependencytrack.persistence.jdbi.PackageMetadataDao;
+import org.eclipse.microprofile.config.ConfigProvider;
+import org.glassfish.hk2.utilities.binding.AbstractBinder;
 import org.glassfish.jersey.server.ResourceConfig;
-import org.json.JSONArray;
-import org.json.JSONObject;
-import org.junit.ClassRule;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.RegisterExtension;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mockito;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.Date;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 import static net.javacrumbs.jsonunit.assertj.JsonAssertions.assertThatJson;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.dependencytrack.model.WorkflowStatus.PENDING;
-import static org.dependencytrack.persistence.jdbi.JdbiFactory.withJdbiHandle;
+import static org.dependencytrack.persistence.jdbi.JdbiFactory.useJdbiHandle;
 import static org.dependencytrack.resources.v1.FindingResource.MEDIA_TYPE_SARIF_JSON;
-import static org.hamcrest.CoreMatchers.equalTo;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertNull;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
+import static wiremock.org.apache.commons.io.IOUtils.resourceToString;
 
 public class FindingResourceTest extends ResourceTest {
 
-    @ClassRule
-    public static JerseyTestRule jersey = new JerseyTestRule(
+    private static final DexEngine DEX_ENGINE_MOCK = mock(DexEngine.class);
+
+    @RegisterExtension
+    static JerseyTestExtension jersey = new JerseyTestExtension(
             new ResourceConfig(FindingResource.class)
                     .register(ApiFilter.class)
-                    .register(AuthenticationFeature.class));
+                    .register(AuthenticationFeature.class)
+                    .register(AuthorizationFeature.class)
+                    .register(new AbstractBinder() {
+                        @Override
+                        protected void configure() {
+                            bind(DEX_ENGINE_MOCK).to(DexEngine.class);
+                        }
+                    }));
+
+    @AfterEach
+    void afterEach() {
+        Mockito.reset(DEX_ENGINE_MOCK);
+    }
 
     @Test
     public void getFindingsByProjectTest() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
         Project p2 = qm.createProject("Acme Example", null, "2.0", null, null, null, null, false);
         Component c1 = createComponent(p1, "Component A", "1.0");
@@ -91,10 +123,10 @@ public class FindingResourceTest extends ResourceTest {
         Vulnerability v2 = createVulnerability("Vuln-2", Severity.HIGH);
         Vulnerability v3 = createVulnerability("Vuln-3", Severity.MEDIUM);
         Vulnerability v4 = createVulnerability("Vuln-4", Severity.LOW);
-        qm.addVulnerability(v1, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v2, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v3, c2, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v4, c5, AnalyzerIdentity.NONE);
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v2, c1, "none");
+        qm.addVulnerability(v3, c2, "none");
+        qm.addVulnerability(v4, c5, "none");
         Response response = jersey.target(V1_FINDING + "/project/" + p1.getUuid().toString()).request()
                 .header(X_API_KEY, apiKey)
                 .get(Response.class);
@@ -143,14 +175,16 @@ public class FindingResourceTest extends ResourceTest {
     }
 
     @Test
-    public void getFindingsByProjectEmptyTest() {
-        final var metaComponent = new RepositoryMetaComponent();
-        metaComponent.setRepositoryType(RepositoryType.MAVEN);
-        metaComponent.setNamespace("com.acme");
-        metaComponent.setName("acme-lib");
-        metaComponent.setLatestVersion("1.2.3");
-        metaComponent.setLastCheck(new Date());
-        qm.persist(metaComponent);
+    public void getFindingsByProjectEmptyTest() throws Exception {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
+        useJdbiHandle(handle -> new PackageMetadataDao(handle).upsertAll(List.of(
+                new PackageMetadata(
+                        new com.github.packageurl.PackageURL("pkg:maven/com.acme/acme-lib"),
+                        "1.2.3",
+                        Instant.now(),
+                        null,
+                        null))));
 
         final var project = new Project();
         project.setName("acme-app");
@@ -167,6 +201,8 @@ public class FindingResourceTest extends ResourceTest {
 
     @Test
     public void getFindingsByProjectInvalidTest() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Response response = jersey.target(V1_FINDING + "/project/" + UUID.randomUUID()).request()
                 .header(X_API_KEY, apiKey)
                 .get(Response.class);
@@ -178,6 +214,7 @@ public class FindingResourceTest extends ResourceTest {
 
     @Test
     public void getFindingsByProjectAclTest() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
         enablePortfolioAccessControl();
 
         final var project = new Project();
@@ -207,6 +244,8 @@ public class FindingResourceTest extends ResourceTest {
 
     @Test
     public void getFindingsByProjectWithAnalysisTest() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Project p1 = qm.createProject("Acme Example 1", null, "1.0", null, null, null, null, false);
 
         Component c1 = createComponent(p1, "Component A", "1.0"); // with analysis
@@ -215,10 +254,12 @@ public class FindingResourceTest extends ResourceTest {
         Vulnerability v1 = createVulnerability("Vuln-1", Severity.CRITICAL);
         Vulnerability v2 = createVulnerability("Vuln-2", Severity.CRITICAL);
 
-        qm.addVulnerability(v1, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v2, c2, AnalyzerIdentity.NONE);
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v2, c2, "none");
 
-        withJdbiHandle(handle -> handle.attach(AnalysisDao.class).makeAnalysis(p1.getId(), c1.getId(), v1.getId(), AnalysisState.FALSE_POSITIVE, null, null, null, false));
+        qm.makeAnalysis(
+                new MakeAnalysisCommand(c1, v1)
+                        .withState(AnalysisState.FALSE_POSITIVE));
 
         // Should include all findings with or without analysis.
         Response response = jersey.target(V1_FINDING + "/project/" + p1.getUuid().toString()).request()
@@ -265,6 +306,8 @@ public class FindingResourceTest extends ResourceTest {
 
     @Test
     public void exportFindingsByProjectTest() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
         Project p2 = qm.createProject("Acme Example", null, "2.0", null, null, null, null, false);
         Component c1 = createComponent(p1, "Component A", "1.0");
@@ -277,10 +320,10 @@ public class FindingResourceTest extends ResourceTest {
         Vulnerability v2 = createVulnerability("Vuln-2", Severity.HIGH);
         Vulnerability v3 = createVulnerability("Vuln-3", Severity.MEDIUM);
         Vulnerability v4 = createVulnerability("Vuln-4", Severity.LOW);
-        qm.addVulnerability(v1, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v2, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v3, c2, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v4, c5, AnalyzerIdentity.NONE);
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v2, c1, "none");
+        qm.addVulnerability(v3, c2, "none");
+        qm.addVulnerability(v4, c5, "none");
         Response response = jersey.target(V1_FINDING + "/project/" + p1.getUuid().toString() + "/export").request()
                 .header(X_API_KEY, apiKey)
                 .get(Response.class);
@@ -288,8 +331,8 @@ public class FindingResourceTest extends ResourceTest {
         assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         JsonObject json = parseJsonObject(response);
         assertNotNull(json);
-        assertEquals(Config.getInstance().getApplicationName(), json.getJsonObject("meta").getString("application"));
-        assertEquals(Config.getInstance().getApplicationVersion(), json.getJsonObject("meta").getString("version"));
+        assertEquals(ConfigProvider.getConfig().getValue(AlpineConfigKeys.BUILD_INFO_APPLICATION_NAME, String.class), json.getJsonObject("meta").getString("application"));
+        assertEquals(ConfigProvider.getConfig().getValue(AlpineConfigKeys.BUILD_INFO_APPLICATION_VERSION, String.class), json.getJsonObject("meta").getString("version"));
         assertNotNull(json.getJsonObject("meta").getString("timestamp"));
         assertEquals("Acme Example", json.getJsonObject("project").getString("name"));
         assertEquals("1.0", json.getJsonObject("project").getString("version"));
@@ -338,6 +381,8 @@ public class FindingResourceTest extends ResourceTest {
 
     @Test
     public void exportFindingsByProjectInvalidTest() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Response response = jersey.target(V1_FINDING + "/project/" + UUID.randomUUID() + "/export").request()
                 .header(X_API_KEY, apiKey)
                 .get(Response.class);
@@ -349,6 +394,7 @@ public class FindingResourceTest extends ResourceTest {
 
     @Test
     public void exportFindingsByProjectAclTest() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
         enablePortfolioAccessControl();
 
         final var project = new Project();
@@ -377,54 +423,52 @@ public class FindingResourceTest extends ResourceTest {
     }
 
     @Test
-    public void getFindingsByProjectWithComponentLatestVersionTest() {
+    public void getFindingsByProjectWithComponentLatestVersionTest() throws Exception {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
         Project p2 = qm.createProject("Acme Example", null, "2.0", null, null, null, null, false);
         Component c1 = createComponent(p1, "Component A", "1.0");
         c1.setPurl("pkg:/maven/org.acme/component-a@1.0.0");
-        RepositoryMetaComponent r1 = new RepositoryMetaComponent();
-        Date d1 = new Date();
-        r1.setLastCheck(d1);
-        r1.setNamespace("org.acme");
-        r1.setName("component-a");
-        r1.setLatestVersion("2.0.0");
-        r1.setRepositoryType(RepositoryType.MAVEN);
-        qm.persist(r1);
 
         Component c2 = createComponent(p1, "Component B", "1.0");
         c2.setPurl("pkg:/maven/org.acme/component-b@1.0.0");
-        RepositoryMetaComponent r2 = new RepositoryMetaComponent();
-        Date d2 = new Date();
-        r2.setLastCheck(d2);
-        r2.setNamespace("org.acme");
-        r2.setName("component-b");
-        r2.setLatestVersion("3.0.0");
-        r2.setRepositoryType(RepositoryType.MAVEN);
-        qm.persist(r2);
 
         createComponent(p1, "Component C", "1.0");
         createComponent(p2, "Component D", "1.0");
 
         Component c5 = createComponent(p2, "Component E", "1.0");
         c5.setPurl("pkg:/maven/org.acme/component-e@1.0.0");
-        RepositoryMetaComponent r3 = new RepositoryMetaComponent();
-        Date d3 = new Date();
-        r3.setLastCheck(d3);
-        r3.setNamespace("org.acme");
-        r3.setName("component-e");
-        r3.setLatestVersion("4.0.0");
-        r3.setRepositoryType(RepositoryType.MAVEN);
-        qm.persist(r3);
+
+        useJdbiHandle(handle -> new PackageMetadataDao(handle).upsertAll(List.of(
+                new PackageMetadata(
+                        new com.github.packageurl.PackageURL("pkg:maven/org.acme/component-a"),
+                        "2.0.0",
+                        Instant.now(),
+                        null,
+                        null),
+                new PackageMetadata(
+                        new com.github.packageurl.PackageURL("pkg:maven/org.acme/component-b"),
+                        "3.0.0",
+                        Instant.now(),
+                        null,
+                        null),
+                new PackageMetadata(
+                        new com.github.packageurl.PackageURL("pkg:maven/org.acme/component-e"),
+                        "4.0.0",
+                        Instant.now(),
+                        null,
+                        null))));
 
         createComponent(p2, "Component F", "1.0");
         Vulnerability v1 = createVulnerability("Vuln-1", Severity.CRITICAL);
         Vulnerability v2 = createVulnerability("Vuln-2", Severity.HIGH);
         Vulnerability v3 = createVulnerability("Vuln-3", Severity.MEDIUM);
         Vulnerability v4 = createVulnerability("Vuln-4", Severity.LOW);
-        qm.addVulnerability(v1, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v2, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v3, c2, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v4, c5, AnalyzerIdentity.NONE);
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v2, c1, "none");
+        qm.addVulnerability(v3, c2, "none");
+        qm.addVulnerability(v4, c5, "none");
         Response response = jersey.target(V1_FINDING + "/project/" + p1.getUuid().toString()).request()
                 .header(X_API_KEY, apiKey)
                 .get(Response.class);
@@ -477,12 +521,14 @@ public class FindingResourceTest extends ResourceTest {
 
     @Test
     public void getFindingsByProjectWithComponentLatestVersionWithoutRepositoryMetaComponent() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
         Component c1 = createComponent(p1, "Component A", "1.0");
         c1.setPurl("pkg:/maven/org.acme/component-a@1.0.0");
 
         Vulnerability v1 = createVulnerability("Vuln-1", Severity.CRITICAL);
-        qm.addVulnerability(v1, c1, AnalyzerIdentity.NONE);
+        qm.addVulnerability(v1, c1, "none");
         Response response = jersey.target(V1_FINDING + "/project/" + p1.getUuid().toString()).request()
                 .header(X_API_KEY, apiKey)
                 .get(Response.class);
@@ -505,6 +551,8 @@ public class FindingResourceTest extends ResourceTest {
 
     @Test
     public void getFindingsByProjectWithCvssAndOwaspData() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
         Component c1 = createComponent(p1, "Component A", "1.0");
         c1.setPurl("pkg:/maven/org.acme/component-a@1.0.0");
@@ -516,7 +564,7 @@ public class FindingResourceTest extends ResourceTest {
         v1.setCvssV2Vector("cvssV2-vector");
         v1.setCvssV3Vector("cvssV3-vector");
         v1.setOwaspRRVector("owasp-vector");
-        qm.addVulnerability(v1, c1, AnalyzerIdentity.NONE);
+        qm.addVulnerability(v1, c1, "none");
 
         Response response = jersey.target(V1_FINDING + "/project/" + p1.getUuid().toString()).request()
                 .header(X_API_KEY, apiKey)
@@ -536,6 +584,8 @@ public class FindingResourceTest extends ResourceTest {
 
     @Test
     public void getFindingsByProjectWithComponentOccurrence() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
         Component c1 = createComponent(p1, "Component A", "1.0");
         Component c2 = createComponent(p1, "Component B", "1.0");
@@ -549,8 +599,8 @@ public class FindingResourceTest extends ResourceTest {
         qm.persist(componentOccurrence);
 
         Vulnerability v1 = createVulnerability("Vuln-1", Severity.CRITICAL);
-        qm.addVulnerability(v1, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v1, c2, AnalyzerIdentity.NONE);
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v1, c2, "none");
 
         Response response = jersey.target(V1_FINDING + "/project/" + p1.getUuid().toString()).request()
                 .header(X_API_KEY, apiKey)
@@ -570,6 +620,8 @@ public class FindingResourceTest extends ResourceTest {
 
     @Test
     public void getFindingsByProjectWithRatingOverride() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
         Component c1 = createComponent(p1, "Component A", "1.0");
         c1.setPurl("pkg:/maven/org.acme/component-a@1.0.0");
@@ -577,7 +629,7 @@ public class FindingResourceTest extends ResourceTest {
         Vulnerability v1 = createVulnerability("Vuln-1", Severity.CRITICAL);
         v1.setCvssV2BaseScore(BigDecimal.valueOf(0.2));
         v1.setCvssV2Vector("v-cvssV2-vector");
-        qm.addVulnerability(v1, c1, AnalyzerIdentity.NONE);
+        qm.addVulnerability(v1, c1, "none");
 
         var analysis = new Analysis();
         analysis.setVulnerability(v1);
@@ -602,39 +654,47 @@ public class FindingResourceTest extends ResourceTest {
     }
 
     @Test
-    public void testWorkflowStepsShouldBeCreatedOnReanalyze() {
-        Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
+    public void analyzeProjectShouldCreateAnalyzeProjectWorkflowRun() {
+        initializeWithPermissions(Permissions.VULNERABILITY_ANALYSIS);
 
-        Response response = jersey.target(V1_FINDING + "/project/" + p1.getUuid().toString() +  "/analyze").request()
+        var project = new Project();
+        project.setName("Acme Example");
+        project = qm.persist(project);
+
+        doReturn(UUID.fromString("d93df5a0-f29e-4ee1-9c98-cee4dd243750"))
+                .when(DEX_ENGINE_MOCK).createRun(any(CreateWorkflowRunRequest.class));
+
+        Response response = jersey
+                .target("%s/project/%s/analyze".formatted(V1_FINDING, project.getUuid()))
+                .request()
                 .header(X_API_KEY, apiKey)
                 .post(Entity.json("{}"));
-        Map<String, String> responseMap = response.readEntity(Map.class);
-
-        assertEquals(200, response.getStatus(), 0);
-
-        UUID uuid = UUID.fromString(responseMap.get("token"));
-        assertThat(qm.getAllWorkflowStatesForAToken(uuid)).satisfiesExactlyInAnyOrder(
-                workflowState -> {
-                    assertThat(workflowState.getStep()).isEqualTo(WorkflowStep.VULN_ANALYSIS);
-                    assertThat(workflowState.getToken()).isEqualTo(uuid);
-                    assertThat(workflowState.getParent()).isNull();
-                    assertThat(workflowState.getStatus()).isEqualTo(PENDING);
-                    assertThat(workflowState.getUpdatedAt()).isNotNull();
-                    assertThat(workflowState.getStartedAt()).isNull();
-                },
-                workflowState -> {
-                    assertThat(workflowState.getStep()).isEqualTo(WorkflowStep.POLICY_EVALUATION);
-                    assertThat(workflowState.getToken()).isEqualTo(uuid);
-                    assertThat(workflowState.getParent()).isNotNull();
-                    assertThat(workflowState.getStatus()).isEqualTo(PENDING);
-                    assertThat(workflowState.getUpdatedAt()).isNotNull();
-                    assertThat(workflowState.getStartedAt()).isNull();
+        assertThat(response.getStatus()).isEqualTo(200);
+        assertThatJson(getPlainTextBody(response)).isEqualTo(/* language=JSON */ """
+                {
+                  "token": "d93df5a0-f29e-4ee1-9c98-cee4dd243750"
                 }
-        );
+                """);
+
+        //noinspection unchecked
+        ArgumentCaptor<CreateWorkflowRunRequest<?>> dexCreateRunCaptor =
+                ArgumentCaptor.forClass(CreateWorkflowRunRequest.class);
+        verify(DEX_ENGINE_MOCK, times(2)).createRun(dexCreateRunCaptor.capture());
+
+        CreateWorkflowRunRequest<?> createDexRunRequest = dexCreateRunCaptor.getAllValues().getFirst();
+        assertThat(createDexRunRequest.workflowName()).isEqualTo("analyze-project");
+        assertThat(createDexRunRequest.workflowVersion()).isEqualTo(1);
+        assertThat(createDexRunRequest.workflowInstanceId()).isEqualTo("analyze-project-manual:" + project.getUuid());
+        assertThat(createDexRunRequest.concurrencyKey()).isEqualTo("analyze-project:" + project.getUuid());
+        assertThat(createDexRunRequest.labels()).containsEntry("project_uuid", project.getUuid().toString());
+        assertThat(createDexRunRequest.labels()).hasEntrySatisfying("triggered_by", value -> assertThat(value).startsWith("odt_"));
+        assertThat(createDexRunRequest.priority()).isEqualTo(75);
     }
 
     @Test
     public void getAllFindings() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Project p1 = qm.createProject("Acme Example 1", null, "1.0", null, null, null, null, false);
         Project p1_child = qm.createProject("Acme Example 2", null, "1.0", null, p1, null, null, false);
         Project p2 = qm.createProject("Acme Example 3", null, "1.0", null, null, null, null, false);
@@ -653,11 +713,11 @@ public class FindingResourceTest extends ResourceTest {
         v2.setPublished(date);
         v3.setPublished(date);
         v4.setPublished(date);
-        qm.addVulnerability(v1, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v2, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v2, c3, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v3, c2, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v4, c5, AnalyzerIdentity.NONE);
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v2, c1, "none");
+        qm.addVulnerability(v2, c3, "none");
+        qm.addVulnerability(v3, c2, "none");
+        qm.addVulnerability(v4, c5, "none");
         Response response = jersey.target(V1_FINDING)
                 .queryParam("sortName", "component.projectName")
                 .queryParam("sortOrder", "asc")
@@ -693,6 +753,8 @@ public class FindingResourceTest extends ResourceTest {
 
     @Test
     public void getAllFindingsSortedBySeverity() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Project p1 = qm.createProject("Acme Example 1", null, "1.0", null, null, null, null, false);
         Component c1 = createComponent(p1, "Component A", "1.0");
         Vulnerability v1 = createVulnerability("Vuln-1", Severity.CRITICAL);
@@ -702,9 +764,9 @@ public class FindingResourceTest extends ResourceTest {
         v1.setPublished(date);
         v2.setPublished(date);
         v3.setPublished(date);
-        qm.addVulnerability(v1, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v2, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v3, c1, AnalyzerIdentity.NONE);
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v2, c1, "none");
+        qm.addVulnerability(v3, c1, "none");
         Response response = jersey.target(V1_FINDING)
                 .queryParam("sortName", "vulnerability.severity")
                 .queryParam("sortOrder", "desc")
@@ -722,11 +784,55 @@ public class FindingResourceTest extends ResourceTest {
     }
 
     @Test
+    public void getAllFindingsFilteredBySeverity() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
+        Project p1 = qm.createProject("Acme Example 1", null, "1.0", null, null, null, null, false);
+        Component c1 = createComponent(p1, "Component A", "1.0");
+        Vulnerability v1 = createVulnerability("Vuln-1", Severity.CRITICAL);
+        Vulnerability v2 = createVulnerability("Vuln-2", Severity.MEDIUM);
+        Vulnerability v3 = createVulnerability("Vuln-3", Severity.HIGH);
+        Date date = new Date();
+        v1.setPublished(date);
+        v2.setPublished(date);
+        v3.setPublished(date);
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v2, c1, "none");
+        qm.addVulnerability(v3, c1, "none");
+
+        // Filter by single severity
+        Response response = jersey.target(V1_FINDING)
+                .queryParam("severity", "CRITICAL")
+                .request()
+                .header(X_API_KEY, apiKey)
+                .get(Response.class);
+        assertEquals(200, response.getStatus(), 0);
+        assertEquals(String.valueOf(1), response.getHeaderString(TOTAL_COUNT_HEADER));
+        JsonArray json = parseJsonArray(response);
+        assertNotNull(json);
+        assertEquals(1, json.size());
+        assertEquals("CRITICAL", json.getJsonObject(0).getJsonObject("vulnerability").getString("severity"));
+
+        // Filter by multiple severities
+        response = jersey.target(V1_FINDING)
+                .queryParam("severity", "CRITICAL,HIGH")
+                .request()
+                .header(X_API_KEY, apiKey)
+                .get(Response.class);
+        assertEquals(200, response.getStatus(), 0);
+        assertEquals(String.valueOf(2), response.getHeaderString(TOTAL_COUNT_HEADER));
+        json = parseJsonArray(response);
+        assertNotNull(json);
+        assertEquals(2, json.size());
+    }
+
+    @Test
     public void getAllFindingsWithAclEnabled() {
         Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
         Project p1_child = qm.createProject("Acme Example Child", null, "1.0", null, p1, null, null, false);
         Project p2 = qm.createProject("Acme Example", null, "2.0", null, null, null, null, false);
         Team team = qm.createTeam("Team Acme");
+        team.setPermissions(List.of(qm.createPermission(Permissions.VIEW_VULNERABILITY.name(), null)));
         ApiKey apiKey = qm.createApiKey(team);
         p1.addAccessTeam(team);
         Component c1 = createComponent(p1, "Component A", "1.0");
@@ -744,11 +850,11 @@ public class FindingResourceTest extends ResourceTest {
         v2.setPublished(date);
         v3.setPublished(date);
         v4.setPublished(date);
-        qm.addVulnerability(v1, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v2, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v2, c3, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v3, c2, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v4, c5, AnalyzerIdentity.NONE);
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v2, c1, "none");
+        qm.addVulnerability(v2, c3, "none");
+        qm.addVulnerability(v3, c2, "none");
+        qm.addVulnerability(v4, c5, "none");
         ConfigProperty aclToggle = qm.getConfigProperty(ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED.getGroupName(), ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED.getPropertyName());
         if (aclToggle == null) {
             qm.createConfigProperty(ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED.getGroupName(), ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED.getPropertyName(), "true", ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED.getPropertyType(), ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED.getDescription());
@@ -786,6 +892,8 @@ public class FindingResourceTest extends ResourceTest {
 
     @Test
     public void getAllFindingsWithComponentOccurrence() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
         Component c1 = createComponent(p1, "Component A", "1.0");
         Component c2 = createComponent(p1, "Component B", "1.0");
@@ -799,8 +907,8 @@ public class FindingResourceTest extends ResourceTest {
         qm.persist(componentOccurrence);
 
         Vulnerability v1 = createVulnerability("Vuln-1", Severity.CRITICAL);
-        qm.addVulnerability(v1, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v1, c2, AnalyzerIdentity.NONE);
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v1, c2, "none");
 
         Response response = jersey.target(V1_FINDING)
                 .request()
@@ -821,6 +929,8 @@ public class FindingResourceTest extends ResourceTest {
 
     @Test
     public void getAllFindingsGroupedByVulnerability() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
         Project p1_child = qm.createProject("Acme Example Child", null, "1.0", null, p1, null, null, false);
         Project p2 = qm.createProject("Acme Example", null, "2.0", null, null, null, null, false);
@@ -839,13 +949,13 @@ public class FindingResourceTest extends ResourceTest {
         v2.setPublished(date);
         v3.setPublished(date);
         v4.setPublished(date);
-        qm.addVulnerability(v1, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v2, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v2, c3, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v2, c4, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v3, c2, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v3, c6, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v4, c5, AnalyzerIdentity.NONE);
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v2, c1, "none");
+        qm.addVulnerability(v2, c3, "none");
+        qm.addVulnerability(v2, c4, "none");
+        qm.addVulnerability(v3, c2, "none");
+        qm.addVulnerability(v3, c6, "none");
+        qm.addVulnerability(v4, c5, "none");
         Response response = jersey.target(V1_FINDING + "/grouped").request()
                 .header(X_API_KEY, apiKey)
                 .get(Response.class);
@@ -857,7 +967,7 @@ public class FindingResourceTest extends ResourceTest {
         assertEquals("INTERNAL", json.getJsonObject(0).getJsonObject("vulnerability").getString("source"));
         assertEquals("Vuln-1", json.getJsonObject(0).getJsonObject("vulnerability").getString("vulnId"));
         assertEquals(Severity.CRITICAL.name(), json.getJsonObject(0).getJsonObject("vulnerability").getString("severity"));
-        assertEquals("NONE", json.getJsonObject(0).getJsonObject("attribution").getString("analyzerIdentity"));
+        assertEquals("none", json.getJsonObject(0).getJsonObject("attribution").getString("analyzerIdentity"));
         assertEquals(date.getTime(), json.getJsonObject(0).getJsonObject("vulnerability").getJsonNumber("published").longValue());
         assertEquals(2, json.getJsonObject(0).getJsonObject("vulnerability").getJsonArray("cwes").size());
         assertEquals(80, json.getJsonObject(0).getJsonObject("vulnerability").getJsonArray("cwes").getInt(0));
@@ -867,7 +977,7 @@ public class FindingResourceTest extends ResourceTest {
         assertEquals("INTERNAL", json.getJsonObject(1).getJsonObject("vulnerability").getString("source"));
         assertEquals("Vuln-2", json.getJsonObject(1).getJsonObject("vulnerability").getString("vulnId"));
         assertEquals(Severity.HIGH.name(), json.getJsonObject(1).getJsonObject("vulnerability").getString("severity"));
-        assertEquals("NONE", json.getJsonObject(1).getJsonObject("attribution").getString("analyzerIdentity"));
+        assertEquals("none", json.getJsonObject(1).getJsonObject("attribution").getString("analyzerIdentity"));
         assertEquals(date.getTime(), json.getJsonObject(1).getJsonObject("vulnerability").getJsonNumber("published").longValue());
         assertEquals(2, json.getJsonObject(1).getJsonObject("vulnerability").getJsonArray("cwes").size());
         assertEquals(80, json.getJsonObject(1).getJsonObject("vulnerability").getJsonArray("cwes").getInt(0));
@@ -877,7 +987,7 @@ public class FindingResourceTest extends ResourceTest {
         assertEquals("INTERNAL", json.getJsonObject(2).getJsonObject("vulnerability").getString("source"));
         assertEquals("Vuln-3", json.getJsonObject(2).getJsonObject("vulnerability").getString("vulnId"));
         assertEquals(Severity.MEDIUM.name(), json.getJsonObject(2).getJsonObject("vulnerability").getString("severity"));
-        assertEquals("NONE", json.getJsonObject(2).getJsonObject("attribution").getString("analyzerIdentity"));
+        assertEquals("none", json.getJsonObject(2).getJsonObject("attribution").getString("analyzerIdentity"));
         assertEquals(date.getTime(), json.getJsonObject(2).getJsonObject("vulnerability").getJsonNumber("published").longValue());
         assertEquals(2, json.getJsonObject(2).getJsonObject("vulnerability").getJsonArray("cwes").size());
         assertEquals(80, json.getJsonObject(2).getJsonObject("vulnerability").getJsonArray("cwes").getInt(0));
@@ -887,7 +997,7 @@ public class FindingResourceTest extends ResourceTest {
         assertEquals("INTERNAL", json.getJsonObject(3).getJsonObject("vulnerability").getString("source"));
         assertEquals("Vuln-4", json.getJsonObject(3).getJsonObject("vulnerability").getString("vulnId"));
         assertEquals(Severity.LOW.name(), json.getJsonObject(3).getJsonObject("vulnerability").getString("severity"));
-        assertEquals("NONE", json.getJsonObject(3).getJsonObject("attribution").getString("analyzerIdentity"));
+        assertEquals("none", json.getJsonObject(3).getJsonObject("attribution").getString("analyzerIdentity"));
         assertEquals(date.getTime(), json.getJsonObject(3).getJsonObject("vulnerability").getJsonNumber("published").longValue());
         assertEquals(2, json.getJsonObject(3).getJsonObject("vulnerability").getJsonArray("cwes").size());
         assertEquals(80, json.getJsonObject(3).getJsonObject("vulnerability").getJsonArray("cwes").getInt(0));
@@ -901,6 +1011,7 @@ public class FindingResourceTest extends ResourceTest {
         Project p1_child = qm.createProject("Acme Example Child", null, "1.0", null, p1, null, null, false);
         Project p2 = qm.createProject("Acme Example", null, "2.0", null, null, null, null, false);
         Team team = qm.createTeam("Team Acme");
+        team.setPermissions(List.of(qm.createPermission(Permissions.VIEW_VULNERABILITY.name(), null)));
         ApiKey apiKey = qm.createApiKey(team);
         p1.addAccessTeam(team);
         Component c1 = createComponent(p1, "Component A", "1.0");
@@ -918,13 +1029,13 @@ public class FindingResourceTest extends ResourceTest {
         v2.setPublished(date);
         v3.setPublished(date);
         v4.setPublished(date);
-        qm.addVulnerability(v1, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v2, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v2, c3, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v2, c4, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v3, c2, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v3, c6, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v4, c5, AnalyzerIdentity.NONE);
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v2, c1, "none");
+        qm.addVulnerability(v2, c3, "none");
+        qm.addVulnerability(v2, c4, "none");
+        qm.addVulnerability(v3, c2, "none");
+        qm.addVulnerability(v3, c6, "none");
+        qm.addVulnerability(v4, c5, "none");
         ConfigProperty aclToggle = qm.getConfigProperty(ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED.getGroupName(), ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED.getPropertyName());
         if (aclToggle == null) {
             qm.createConfigProperty(ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED.getGroupName(), ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED.getPropertyName(), "true", ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED.getPropertyType(), ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED.getDescription());
@@ -943,7 +1054,7 @@ public class FindingResourceTest extends ResourceTest {
         assertEquals("INTERNAL", json.getJsonObject(0).getJsonObject("vulnerability").getString("source"));
         assertEquals("Vuln-1", json.getJsonObject(0).getJsonObject("vulnerability").getString("vulnId"));
         assertEquals(Severity.CRITICAL.name(), json.getJsonObject(0).getJsonObject("vulnerability").getString("severity"));
-        assertEquals("NONE", json.getJsonObject(0).getJsonObject("attribution").getString("analyzerIdentity"));
+        assertEquals("none", json.getJsonObject(0).getJsonObject("attribution").getString("analyzerIdentity"));
         assertEquals(date.getTime(), json.getJsonObject(0).getJsonObject("vulnerability").getJsonNumber("published").longValue());
         assertEquals(2, json.getJsonObject(0).getJsonObject("vulnerability").getJsonArray("cwes").size());
         assertEquals(80, json.getJsonObject(0).getJsonObject("vulnerability").getJsonArray("cwes").getInt(0));
@@ -953,7 +1064,7 @@ public class FindingResourceTest extends ResourceTest {
         assertEquals("INTERNAL", json.getJsonObject(1).getJsonObject("vulnerability").getString("source"));
         assertEquals("Vuln-2", json.getJsonObject(1).getJsonObject("vulnerability").getString("vulnId"));
         assertEquals(Severity.HIGH.name(), json.getJsonObject(1).getJsonObject("vulnerability").getString("severity"));
-        assertEquals("NONE", json.getJsonObject(1).getJsonObject("attribution").getString("analyzerIdentity"));
+        assertEquals("none", json.getJsonObject(1).getJsonObject("attribution").getString("analyzerIdentity"));
         assertEquals(date.getTime(), json.getJsonObject(1).getJsonObject("vulnerability").getJsonNumber("published").longValue());
         assertEquals(2, json.getJsonObject(1).getJsonObject("vulnerability").getJsonArray("cwes").size());
         assertEquals(80, json.getJsonObject(1).getJsonObject("vulnerability").getJsonArray("cwes").getInt(0));
@@ -963,7 +1074,7 @@ public class FindingResourceTest extends ResourceTest {
         assertEquals("INTERNAL", json.getJsonObject(2).getJsonObject("vulnerability").getString("source"));
         assertEquals("Vuln-3", json.getJsonObject(2).getJsonObject("vulnerability").getString("vulnId"));
         assertEquals(Severity.MEDIUM.name(), json.getJsonObject(2).getJsonObject("vulnerability").getString("severity"));
-        assertEquals("NONE", json.getJsonObject(2).getJsonObject("attribution").getString("analyzerIdentity"));
+        assertEquals("none", json.getJsonObject(2).getJsonObject("attribution").getString("analyzerIdentity"));
         assertEquals(date.getTime(), json.getJsonObject(2).getJsonObject("vulnerability").getJsonNumber("published").longValue());
         assertEquals(2, json.getJsonObject(2).getJsonObject("vulnerability").getJsonArray("cwes").size());
         assertEquals(80, json.getJsonObject(2).getJsonObject("vulnerability").getJsonArray("cwes").getInt(0));
@@ -972,7 +1083,184 @@ public class FindingResourceTest extends ResourceTest {
     }
 
     @Test
-    public void getSARIFFindingsByProjectTest() {
+    void getAllFindingsWithEpssFilterTest() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
+        Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
+        Component c1 = createComponent(p1, "Component A", "1.0");
+        Component c2 = createComponent(p1, "Component B", "1.0");
+        Component c3 = createComponent(p1, "Component C", "1.0");
+
+        // Create vulnerabilities with different EPSS scores
+        Vulnerability v1 = createVulnerabilityWithEpss("Vuln-1", Severity.CRITICAL, new BigDecimal("0.1"));
+        Vulnerability v2 = createVulnerabilityWithEpss("Vuln-2", Severity.HIGH, new BigDecimal("0.5"));
+        Vulnerability v3 = createVulnerabilityWithEpss("Vuln-3", Severity.MEDIUM, new BigDecimal("0.9"));
+
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v2, c2, "none");
+        qm.addVulnerability(v3, c3, "none");
+
+        // Test filtering by epssFrom
+        Response response = jersey.target(V1_FINDING)
+                .queryParam("epssFrom", "0.3")
+                .request()
+                .header(X_API_KEY, apiKey)
+                .get(Response.class);
+        Assertions.assertEquals(200, response.getStatus());
+        Assertions.assertEquals("2", response.getHeaderString(TOTAL_COUNT_HEADER));
+        JsonArray json = parseJsonArray(response);
+        Assertions.assertNotNull(json);
+        Assertions.assertEquals(2, json.size());
+
+        // Test filtering by epssTo
+        response = jersey.target(V1_FINDING)
+                .queryParam("epssTo", "0.7")
+                .request()
+                .header(X_API_KEY, apiKey)
+                .get(Response.class);
+        Assertions.assertEquals(200, response.getStatus());
+        Assertions.assertEquals("2", response.getHeaderString(TOTAL_COUNT_HEADER));
+
+        // Test filtering by epssFrom and epssTo range
+        response = jersey.target(V1_FINDING)
+                .queryParam("epssFrom", "0.3")
+                .queryParam("epssTo", "0.7")
+                .request()
+                .header(X_API_KEY, apiKey)
+                .get(Response.class);
+        Assertions.assertEquals(200, response.getStatus());
+        Assertions.assertEquals("1", response.getHeaderString(TOTAL_COUNT_HEADER));
+        json = parseJsonArray(response);
+        Assertions.assertNotNull(json);
+        Assertions.assertEquals(1, json.size());
+        Assertions.assertEquals("Vuln-2", json.getJsonObject(0).getJsonObject("vulnerability").getString("vulnId"));
+    }
+
+    @Test
+    void getAllFindingsGroupedByVulnerabilityWithEpssFilterTest() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
+        Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
+        Component c1 = createComponent(p1, "Component A", "1.0");
+        Component c2 = createComponent(p1, "Component B", "1.0");
+        Component c3 = createComponent(p1, "Component C", "1.0");
+
+        // Create vulnerabilities with different EPSS scores
+        Vulnerability v1 = createVulnerabilityWithEpss("Vuln-1", Severity.CRITICAL, new BigDecimal("0.2"));
+        Vulnerability v2 = createVulnerabilityWithEpss("Vuln-2", Severity.HIGH, new BigDecimal("0.6"));
+        Vulnerability v3 = createVulnerabilityWithEpss("Vuln-3", Severity.MEDIUM, new BigDecimal("0.8"));
+
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v2, c2, "none");
+        qm.addVulnerability(v3, c3, "none");
+
+        // Test filtering grouped findings by EPSS range
+        Response response = jersey.target(V1_FINDING + "/grouped")
+                .queryParam("epssFrom", "0.5")
+                .queryParam("epssTo", "0.7")
+                .request()
+                .header(X_API_KEY, apiKey)
+                .get(Response.class);
+        Assertions.assertEquals(200, response.getStatus());
+        Assertions.assertEquals("1", response.getHeaderString(TOTAL_COUNT_HEADER));
+        JsonArray json = parseJsonArray(response);
+        Assertions.assertNotNull(json);
+        Assertions.assertEquals(1, json.size());
+        Assertions.assertEquals("Vuln-2", json.getJsonObject(0).getJsonObject("vulnerability").getString("vulnId"));
+    }
+
+    @Test
+    void getAllFindingsWithEpssPercentileFilterTest() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
+        Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
+        Component c1 = createComponent(p1, "Component A", "1.0");
+        Component c2 = createComponent(p1, "Component B", "1.0");
+        Component c3 = createComponent(p1, "Component C", "1.0");
+
+        // Create vulnerabilities with different EPSS percentiles
+        Vulnerability v1 = createVulnerabilityWithEpssPercentile("Vuln-1", Severity.CRITICAL, new BigDecimal("0.1"));
+        Vulnerability v2 = createVulnerabilityWithEpssPercentile("Vuln-2", Severity.HIGH, new BigDecimal("0.5"));
+        Vulnerability v3 = createVulnerabilityWithEpssPercentile("Vuln-3", Severity.MEDIUM, new BigDecimal("0.9"));
+
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v2, c2, "none");
+        qm.addVulnerability(v3, c3, "none");
+
+        // Test filtering by epssPercentileFrom
+        Response response = jersey.target(V1_FINDING)
+                .queryParam("epssPercentileFrom", "0.3")
+                .request()
+                .header(X_API_KEY, apiKey)
+                .get(Response.class);
+        Assertions.assertEquals(200, response.getStatus());
+        Assertions.assertEquals("2", response.getHeaderString(TOTAL_COUNT_HEADER));
+        JsonArray json = parseJsonArray(response);
+        Assertions.assertNotNull(json);
+        Assertions.assertEquals(2, json.size());
+
+        // Test filtering by epssPercentileTo
+        response = jersey.target(V1_FINDING)
+                .queryParam("epssPercentileTo", "0.7")
+                .request()
+                .header(X_API_KEY, apiKey)
+                .get(Response.class);
+        Assertions.assertEquals(200, response.getStatus());
+        Assertions.assertEquals("2", response.getHeaderString(TOTAL_COUNT_HEADER));
+
+        // Test filtering by epssPercentileFrom and epssPercentileTo range
+        response = jersey.target(V1_FINDING)
+                .queryParam("epssPercentileFrom", "0.3")
+                .queryParam("epssPercentileTo", "0.7")
+                .request()
+                .header(X_API_KEY, apiKey)
+                .get(Response.class);
+        Assertions.assertEquals(200, response.getStatus());
+        Assertions.assertEquals("1", response.getHeaderString(TOTAL_COUNT_HEADER));
+        json = parseJsonArray(response);
+        Assertions.assertNotNull(json);
+        Assertions.assertEquals(1, json.size());
+        Assertions.assertEquals("Vuln-2", json.getJsonObject(0).getJsonObject("vulnerability").getString("vulnId"));
+    }
+
+    @Test
+    void getAllFindingsGroupedByVulnerabilityWithEpssPercentileFilterTest() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
+        Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
+        Component c1 = createComponent(p1, "Component A", "1.0");
+        Component c2 = createComponent(p1, "Component B", "1.0");
+        Component c3 = createComponent(p1, "Component C", "1.0");
+
+        // Create vulnerabilities with different EPSS percentiles
+        Vulnerability v1 = createVulnerabilityWithEpssPercentile("Vuln-1", Severity.CRITICAL, new BigDecimal("0.2"));
+        Vulnerability v2 = createVulnerabilityWithEpssPercentile("Vuln-2", Severity.HIGH, new BigDecimal("0.6"));
+        Vulnerability v3 = createVulnerabilityWithEpssPercentile("Vuln-3", Severity.MEDIUM, new BigDecimal("0.8"));
+
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v2, c2, "none");
+        qm.addVulnerability(v3, c3, "none");
+
+        // Test filtering grouped findings by EPSS percentile range
+        Response response = jersey.target(V1_FINDING + "/grouped")
+                .queryParam("epssPercentileFrom", "0.5")
+                .queryParam("epssPercentileTo", "0.7")
+                .request()
+                .header(X_API_KEY, apiKey)
+                .get(Response.class);
+        Assertions.assertEquals(200, response.getStatus());
+        Assertions.assertEquals("1", response.getHeaderString(TOTAL_COUNT_HEADER));
+        JsonArray json = parseJsonArray(response);
+        Assertions.assertNotNull(json);
+        Assertions.assertEquals(1, json.size());
+        Assertions.assertEquals("Vuln-2", json.getJsonObject(0).getJsonObject("vulnerability").getString("vulnId"));
+    }
+
+    @ParameterizedTest
+    @MethodSource("getSARIFFindingsByProjectTestParameters")
+    public void getSARIFFindingsByProjectTest(String query, String expectedResponsePath) throws Exception {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Project project = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
         Component c1 = createComponent(project, "Component 1", "1.1.4");
         Component c2 = createComponent(project, "Component 2", "2.78.123");
@@ -981,17 +1269,22 @@ public class FindingResourceTest extends ResourceTest {
         c1.setPurl("pkg:maven/org.acme/component1@1.1.4?type=jar");
         c2.setPurl("pkg:maven/com.xyz/component2@2.78.123?type=jar");
 
-        Vulnerability v1 = createVulnerability("Vuln-1", Severity.CRITICAL, "Vuln Title 1", "This is a description", null, 80);
-        Vulnerability v2 = createVulnerability("Vuln-2", Severity.HIGH, "Vuln Title 2", "   Yet another description but with surrounding whitespaces   ", "", 46);
-        Vulnerability v3 = createVulnerability("Vuln-3", Severity.LOW, "Vuln Title 3", "A description-with-hyphens-(and parentheses)", "  Recommendation with whitespaces  ", 23);
+        Vulnerability v1 = createVulnerability("Vuln-1", Severity.CRITICAL, "Vuln Title 1", "This is a description", null, 80, Vulnerability.Source.INTERNAL);
+        Vulnerability v2 = createVulnerability("Vuln-2", Severity.HIGH, "Vuln Title 2", "   Yet another description but with surrounding whitespaces   ", "", 46, Vulnerability.Source.INTERNAL);
+        Vulnerability v3 = createVulnerability("Vuln-3", Severity.LOW, "Vuln Title 3", "A description-with-hyphens-(and parentheses)", "  Recommendation with whitespaces  ", 23, Vulnerability.Source.INTERNAL);
+        Vulnerability v4 = createVulnerability("Vuln-4", Severity.MEDIUM, "Vuln Title 4", "This is a vulnerability that has GITHUB Advisory as a source", null, 20, Vulnerability.Source.GITHUB);
 
-        // Note: Same vulnerability added to multiple components to test whether "rules" field doesn't contain duplicates
-        qm.addVulnerability(v1, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v2, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v3, c1, AnalyzerIdentity.NONE);
-        qm.addVulnerability(v3, c2, AnalyzerIdentity.NONE);
+        qm.addVulnerability(v1, c1, "none");
+        qm.addVulnerability(v2, c1, "none");
+        qm.addVulnerability(v3, c1, "none");
+        qm.addVulnerability(v3, c2, "none");
+        qm.addVulnerability(v4, c2, "none");
 
-        Response response = jersey.target(V1_FINDING + "/project/" + project.getUuid().toString()).request()
+        var target = jersey.target(V1_FINDING + "/project/" + project.getUuid().toString());
+        if (query != null) {
+            target = target.queryParam("source", query);
+        }
+        Response response = target.request()
                 .header(HttpHeaders.ACCEPT, MEDIA_TYPE_SARIF_JSON)
                 .header(X_API_KEY, apiKey)
                 .get(Response.class);
@@ -999,165 +1292,25 @@ public class FindingResourceTest extends ResourceTest {
         assertEquals(200, response.getStatus(), 0);
         assertEquals(MEDIA_TYPE_SARIF_JSON, response.getHeaderString(HttpHeaders.CONTENT_TYPE));
         final String jsonResponse = getPlainTextBody(response);
-        JSONArray resultArray = new JSONObject(jsonResponse).getJSONArray("runs").getJSONObject(0).getJSONArray("results");
-
-        assertThatJson(jsonResponse)
-                .withMatcher("version", equalTo(new About().getVersion()))
-                .withMatcher("fullName", equalTo("OWASP Dependency-Track - " + new About().getVersion()));
-
-        assertThat(resultArray).hasSize(4);
-        assertThat(resultArray).satisfiesExactlyInAnyOrder(
-                vuln1 -> assertThatJson(vuln1).isEqualTo("""
-                        {
-                          "ruleId": "Vuln-1",
-                          "message": {
-                            "text": "This is a description"
-                          },
-                          "locations": [
-                            {
-                              "logicalLocations": [
-                                {
-                                  "fullyQualifiedName": "pkg:maven/org.acme/component1@1.1.4?type=jar"
-                                }
-                              ]
-                            }
-                          ],
-                          "level": "error",
-                          "properties": {
-                            "name": "Component 1",
-                            "group": "org.acme",
-                            "version": "1.1.4",
-                            "source": "INTERNAL",
-                            "cwes": [
-                                {
-                                    "cweId": "80",
-                                    "name": "Improper Neutralization of Script-Related HTML Tags in a Web Page (Basic XSS)"
-                                }
-                            ],
-                            "cvssV3BaseScore": "",
-                            "epssScore": "",
-                            "epssPercentile": "",
-                            "severityRank": "0",
-                            "recommendation": ""
-                          }
-                        }
-                """),
-                vuln2 -> assertThatJson(vuln2).isEqualTo("""
-                        {
-                           "ruleId": "Vuln-2",
-                           "message": {
-                             "text": "Yet another description but with surrounding whitespaces"
-                           },
-                           "locations": [
-                             {
-                               "logicalLocations": [
-                                 {
-                                   "fullyQualifiedName": "pkg:maven/org.acme/component1@1.1.4?type=jar"
-                                 }
-                               ]
-                             }
-                           ],
-                           "level": "error",
-                           "properties": {
-                             "name": "Component 1",
-                             "group": "org.acme",
-                             "version": "1.1.4",
-                             "source": "INTERNAL",
-                             "cwes": [
-                                {
-                                    "cweId": "46",
-                                    "name": "Path Equivalence: 'filename ' (Trailing Space)"
-                                }
-                             ],
-                             "cvssV3BaseScore": "",
-                             "epssScore": "",
-                             "epssPercentile": "",
-                             "severityRank": "1",
-                             "recommendation": ""
-                           }
-                        }
-                """),
-                vuln3 -> assertThatJson(vuln3).isEqualTo("""
-                        {
-                           "ruleId": "Vuln-3",
-                           "message": {
-                             "text": "A description-with-hyphens-(and parentheses)"
-                           },
-                           "locations": [
-                             {
-                               "logicalLocations": [
-                                 {
-                                   "fullyQualifiedName": "pkg:maven/org.acme/component1@1.1.4?type=jar"
-                                 }
-                               ]
-                             }
-                           ],
-                           "level": "note",
-                           "properties": {
-                             "name": "Component 1",
-                             "group": "org.acme",
-                             "version": "1.1.4",
-                             "source": "INTERNAL",
-                             "cwes": [
-                                {
-                                    "cweId": "23",
-                                    "name": "Relative Path Traversal"
-                                }
-                             ],
-                             "cvssV3BaseScore": "",
-                             "epssScore": "",
-                             "epssPercentile": "",
-                             "severityRank": "3",
-                             "recommendation": "Recommendation with whitespaces"
-                           }
-                        }
-                """),
-                vuln3 -> assertThatJson(vuln3).isEqualTo("""
-                        {
-                           "ruleId": "Vuln-3",
-                           "message": {
-                             "text": "A description-with-hyphens-(and parentheses)"
-                           },
-                           "locations": [
-                             {
-                               "logicalLocations": [
-                                 {
-                                   "fullyQualifiedName": "pkg:maven/com.xyz/component2@2.78.123?type=jar"
-                                 }
-                               ]
-                             }
-                           ],
-                           "level": "note",
-                           "properties": {
-                             "name": "Component 2",
-                             "group": "com.xyz",
-                             "version": "2.78.123",
-                             "source": "INTERNAL",
-                             "cwes": [
-                                {
-                                    "cweId": "23",
-                                    "name": "Relative Path Traversal"
-                                }
-                             ],
-                             "cvssV3BaseScore": "",
-                             "epssScore": "",
-                             "epssPercentile": "",
-                             "severityRank": "3",
-                             "recommendation": "Recommendation with whitespaces"
-                           }
-                        }
-                """)
-        );
+        final String version = new About().getVersion();
+        final String fullName = "OWASP Dependency-Track - " + version;
+        String expectedTemplate = resourceToString(expectedResponsePath, StandardCharsets.UTF_8);
+        String expected = expectedTemplate
+                .replace("{{VERSION}}", version)
+                .replace("{{FULL_NAME}}", fullName);
+        assertThatJson(jsonResponse).isEqualTo(expected);
     }
 
     @Test
     public void getFindingsByProjectWithPaginationTest() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
 
         for (int i = 0; i < 5; i++) {
             Component component = createComponent(p1, "Component "+i, "1.0."+i);
             Vulnerability vulnerability = createVulnerability("Vuln-"+i, Severity.LOW);
-            qm.addVulnerability(vulnerability, component, AnalyzerIdentity.NONE);
+            qm.addVulnerability(vulnerability, component, "none");
         }
 
         Response response = jersey.target(V1_FINDING  + "/project/" + p1.getUuid())
@@ -1191,12 +1344,14 @@ public class FindingResourceTest extends ResourceTest {
 
     @Test
     public void getAllFindingsWithPaginationTest() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
 
         for (int i = 0; i < 5; i++) {
             Component component = createComponent(p1, "Component "+i, "1.0."+i);
             Vulnerability vulnerability = createVulnerability("Vuln-"+i, Severity.LOW);
-            qm.addVulnerability(vulnerability, component, AnalyzerIdentity.NONE);
+            qm.addVulnerability(vulnerability, component, "none");
         }
 
         Response response = jersey.target(V1_FINDING)
@@ -1230,12 +1385,14 @@ public class FindingResourceTest extends ResourceTest {
 
     @Test
     public void getAllGroupedFindingsWithPaginationTest() {
+        initializeWithPermissions(Permissions.VIEW_VULNERABILITY);
+
         Project p1 = qm.createProject("Acme Example", null, "1.0", null, null, null, null, false);
 
         for (int i = 0; i < 5; i++) {
             Component component = createComponent(p1, "Component "+i, "1.0."+i);
             Vulnerability vulnerability = createVulnerability("Vuln-"+i, Severity.LOW);
-            qm.addVulnerability(vulnerability, component, AnalyzerIdentity.NONE);
+            qm.addVulnerability(vulnerability, component, "none");
         }
 
         Response response = jersey.target(V1_FINDING + "/grouped")
@@ -1267,6 +1424,13 @@ public class FindingResourceTest extends ResourceTest {
 
     }
 
+    private static Stream<Arguments> getSARIFFindingsByProjectTestParameters() {
+        return Stream.of(
+                Arguments.of("INTERNAL", "/unit/sarif/expected-internal.sarif.json"),
+                Arguments.of(null, "/unit/sarif/expected-all.sarif.json")
+        );
+    }
+
     private Component createComponent(Project project, String name, String version) {
         Component component = new Component();
         component.setProject(project);
@@ -1284,10 +1448,10 @@ public class FindingResourceTest extends ResourceTest {
         return qm.createVulnerability(vulnerability, false);
     }
 
-    private Vulnerability createVulnerability(String vulnId, Severity severity, String title, String description, String recommendation, Integer cweId) {
+    private Vulnerability createVulnerability(String vulnId, Severity severity, String title, String description, String recommendation, Integer cweId, Vulnerability.Source source) {
         Vulnerability vulnerability = new Vulnerability();
         vulnerability.setVulnId(vulnId);
-        vulnerability.setSource(Vulnerability.Source.INTERNAL);
+        vulnerability.setSource(source);
         vulnerability.setSeverity(severity);
         vulnerability.setTitle(title);
         vulnerability.setDescription(description);
@@ -1295,4 +1459,37 @@ public class FindingResourceTest extends ResourceTest {
         vulnerability.setCwes(List.of(cweId));
         return qm.createVulnerability(vulnerability, false);
     }
+
+    private Vulnerability createVulnerabilityWithEpss(String vulnId, Severity severity, BigDecimal epssScore) {
+        Vulnerability vulnerability = new Vulnerability();
+        vulnerability.setVulnId(vulnId);
+        vulnerability.setSource(Vulnerability.Source.INTERNAL);
+        vulnerability.setSeverity(severity);
+        vulnerability.setCwes(List.of(80, 666));
+        vulnerability = qm.createVulnerability(vulnerability, false);
+
+        var epss = new Epss();
+        epss.setCve(vulnId);
+        epss.setScore(epssScore);
+        qm.persist(epss);
+
+        return vulnerability;
+    }
+
+    private Vulnerability createVulnerabilityWithEpssPercentile(String vulnId, Severity severity, BigDecimal epssPercentile) {
+        Vulnerability vulnerability = new Vulnerability();
+        vulnerability.setVulnId(vulnId);
+        vulnerability.setSource(Vulnerability.Source.INTERNAL);
+        vulnerability.setSeverity(severity);
+        vulnerability.setCwes(List.of(80, 666));
+        vulnerability = qm.createVulnerability(vulnerability, false);
+
+        var epss = new Epss();
+        epss.setCve(vulnId);
+        epss.setPercentile(epssPercentile);
+        qm.persist(epss);
+
+        return vulnerability;
+    }
+
 }

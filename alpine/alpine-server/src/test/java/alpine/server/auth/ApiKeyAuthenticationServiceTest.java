@@ -18,7 +18,6 @@
  */
 package alpine.server.auth;
 
-import alpine.Config;
 import alpine.model.ApiKey;
 import alpine.model.Team;
 import alpine.persistence.AlpineQueryManager;
@@ -27,7 +26,6 @@ import alpine.security.ApiKeyGenerator;
 import alpine.server.persistence.PersistenceManagerFactory;
 import org.glassfish.jersey.server.ContainerRequest;
 import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import javax.naming.AuthenticationException;
@@ -40,11 +38,6 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 public class ApiKeyAuthenticationServiceTest {
-
-    @BeforeAll
-    public static void setUpClass() {
-        Config.enableUnitTests();
-    }
 
     @AfterEach
     public void tearDown() {
@@ -61,7 +54,7 @@ public class ApiKeyAuthenticationServiceTest {
         final ContainerRequest containerRequestMock = mock(ContainerRequest.class);
         when(containerRequestMock.getHeaderString("X-Api-Key"))
                 .thenReturn(apiKey.getKey());
-        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock, false);
+        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock);
 
         final ApiKey authenticatedUser = (ApiKey) authService.authenticate();
         assertThat(authenticatedUser).isNotNull();
@@ -82,7 +75,7 @@ public class ApiKeyAuthenticationServiceTest {
         final var containerRequestMock = mock(ContainerRequest.class);
         when(containerRequestMock.getHeaderString("X-Api-Key"))
                 .thenReturn(keyWithDifferentPrefix);
-        final var authService = new ApiKeyAuthenticationService(containerRequestMock, false);
+        final var authService = new ApiKeyAuthenticationService(containerRequestMock);
 
         final var authenticatedApiKey = (ApiKey) authService.authenticate();
         assertThat(authenticatedApiKey).isNotNull();
@@ -100,7 +93,7 @@ public class ApiKeyAuthenticationServiceTest {
         final ContainerRequest containerRequestMock = mock(ContainerRequest.class);
         when(containerRequestMock.getHeaderString("X-Api-Key"))
                 .thenReturn(apiKey.getKey());
-        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock, false);
+        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock);
 
         final ApiKey authenticatedUser = (ApiKey) authService.authenticate();
         assertThat(authenticatedUser).isNotNull();
@@ -114,7 +107,7 @@ public class ApiKeyAuthenticationServiceTest {
         final var containerRequestMock = mock(ContainerRequest.class);
         when(containerRequestMock.getHeaderString("X-Api-Key"))
                 .thenReturn(apiKey.getKey());
-        final var authService = new ApiKeyAuthenticationService(containerRequestMock, false);
+        final var authService = new ApiKeyAuthenticationService(containerRequestMock);
 
         final var authenticatedApiKey = (ApiKey) authService.authenticate();
         assertThat(authenticatedApiKey).isNotNull();
@@ -128,7 +121,7 @@ public class ApiKeyAuthenticationServiceTest {
         final var containerRequestMock = mock(ContainerRequest.class);
         when(containerRequestMock.getHeaderString("X-Api-Key"))
                 .thenReturn(apiKey.getKey());
-        final var authService = new ApiKeyAuthenticationService(containerRequestMock, false);
+        final var authService = new ApiKeyAuthenticationService(containerRequestMock);
 
         final var authenticatedApiKey = (ApiKey) authService.authenticate();
         assertThat(authenticatedApiKey).isNotNull();
@@ -148,7 +141,7 @@ public class ApiKeyAuthenticationServiceTest {
         final ContainerRequest containerRequestMock = mock(ContainerRequest.class);
         when(containerRequestMock.getHeaderString("X-Api-Key"))
                 .thenReturn(oldKey);
-        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock, false);
+        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock);
 
         assertThatExceptionOfType(AuthenticationException.class)
                 .isThrownBy(authService::authenticate);
@@ -164,7 +157,7 @@ public class ApiKeyAuthenticationServiceTest {
         final ContainerRequest containerRequestMock = mock(ContainerRequest.class);
         when(containerRequestMock.getHeaderString("X-Api-Key"))
                 .thenReturn(ApiKey.PREFIX + apiKey.getPublicId() + "0".repeat(ApiKey.API_KEY_LENGTH - ApiKey.LEGACY_PUBLIC_ID_LENGTH));
-        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock, false);
+        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock);
 
         assertThatExceptionOfType(AuthenticationException.class)
                 .isThrownBy(authService::authenticate);
@@ -180,7 +173,7 @@ public class ApiKeyAuthenticationServiceTest {
         final ContainerRequest containerRequestMock = mock(ContainerRequest.class);
         when(containerRequestMock.getHeaderString("X-Api-Key"))
                 .thenReturn(ApiKey.PREFIX + "0".repeat(ApiKey.LEGACY_PUBLIC_ID_LENGTH) + apiKey.getSecret());
-        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock, false);
+        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock);
 
         assertThatExceptionOfType(AuthenticationException.class)
                 .isThrownBy(authService::authenticate);
@@ -195,7 +188,7 @@ public class ApiKeyAuthenticationServiceTest {
         final ContainerRequest containerRequestMock = mock(ContainerRequest.class);
         when(containerRequestMock.getHeaderString("X-Api-Key"))
                 .thenReturn("InvalidKey");
-        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock, false);
+        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock);
 
         assertThatExceptionOfType(AuthenticationException.class)
                 .isThrownBy(authService::authenticate);
@@ -211,7 +204,7 @@ public class ApiKeyAuthenticationServiceTest {
         final ContainerRequest containerRequestMock = mock(ContainerRequest.class);
         when(containerRequestMock.getHeaderString("X-Api-Key"))
                 .thenReturn(apiKey.getKey() + "1");
-        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock, false);
+        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock);
 
         assertThatExceptionOfType(AuthenticationException.class)
                 .isThrownBy(authService::authenticate);
@@ -223,7 +216,7 @@ public class ApiKeyAuthenticationServiceTest {
         final ContainerRequest containerRequestMock = mock(ContainerRequest.class);
         when(containerRequestMock.getHeaderString("X-Api-Key"))
                 .thenReturn(ApiKey.PREFIX + apiKey.getPublicId() + "0".repeat(ApiKey.API_KEY_LENGTH - ApiKey.LEGACY_PUBLIC_ID_LENGTH));
-        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock, false);
+        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock);
 
         assertThatExceptionOfType(AuthenticationException.class)
                 .isThrownBy(authService::authenticate);
@@ -235,7 +228,7 @@ public class ApiKeyAuthenticationServiceTest {
         final ContainerRequest containerRequestMock = mock(ContainerRequest.class);
         when(containerRequestMock.getHeaderString("X-Api-Key"))
                 .thenReturn(ApiKey.PREFIX + "0".repeat(ApiKey.LEGACY_PUBLIC_ID_LENGTH) + apiKey.getSecret());
-        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock, false);
+        final ApiKeyAuthenticationService authService = new ApiKeyAuthenticationService(containerRequestMock);
 
         assertThatExceptionOfType(AuthenticationException.class)
                 .isThrownBy(authService::authenticate);

@@ -18,35 +18,33 @@
  */
 package org.dependencytrack.persistence;
 
-import alpine.test.config.ConfigPropertyRule;
-import alpine.test.config.WithConfigProperty;
 import org.dependencytrack.init.InitTaskContext;
+import org.dependencytrack.support.config.source.memory.MemoryConfigSource;
 import org.eclipse.microprofile.config.ConfigProvider;
 import org.jdbi.v3.core.Jdbi;
-import org.junit.After;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.postgresql.ds.PGSimpleDataSource;
-import org.testcontainers.containers.PostgreSQLContainer;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import org.testcontainers.utility.DockerImageName;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class DatabaseMigrationInitTaskTest {
 
-    @Rule
-    public final ConfigPropertyRule configPropertyRule = new ConfigPropertyRule();
-
-    private PostgreSQLContainer<?> postgresContainer;
+    private PostgreSQLContainer postgresContainer;
     private PGSimpleDataSource dataSource;
     private Jdbi jdbi;
 
-    @Before
+    @BeforeEach
     public void setUp() {
-        postgresContainer = new PostgreSQLContainer<>(DockerImageName.parse("postgres:13-alpine"));
+        postgresContainer = new PostgreSQLContainer(DockerImageName.parse("postgres:14-alpine"))
+                .withCommand("postgres", "-c", "fsync=off", "-c", "full_page_writes=off")
+                .withTmpFs(Map.of("/var/lib/postgresql/data", "rw"));
         postgresContainer.start();
 
         dataSource = new PGSimpleDataSource();
@@ -54,41 +52,40 @@ public class DatabaseMigrationInitTaskTest {
         dataSource.setUser(postgresContainer.getUsername());
         dataSource.setPassword(postgresContainer.getPassword());
 
-        configPropertyRule.setProperty("testcontainers.postgresql.jdbc-url", postgresContainer.getJdbcUrl());
-        configPropertyRule.setProperty("testcontainers.postgresql.username", postgresContainer.getUsername());
-        configPropertyRule.setProperty("testcontainers.postgresql.password", postgresContainer.getPassword());
+        MemoryConfigSource.setProperty("testcontainers.postgresql.jdbc-url", postgresContainer.getJdbcUrl());
+        MemoryConfigSource.setProperty("testcontainers.postgresql.username", postgresContainer.getUsername());
+        MemoryConfigSource.setProperty("testcontainers.postgresql.password", postgresContainer.getPassword());
 
         jdbi = Jdbi.create(dataSource);
     }
 
-    @After
+    @AfterEach
     public void tearDown() {
+        MemoryConfigSource.clear();
         if (postgresContainer != null) {
             postgresContainer.stop();
         }
     }
 
     @Test
-    @WithConfigProperty(value = {
-            "alpine.database.url=${testcontainers.postgresql.jdbc-url}",
-            "alpine.database.username=${testcontainers.postgresql.username}",
-            "alpine.database.password=${testcontainers.postgresql.password}"
-    })
     public void test() throws Exception {
+        MemoryConfigSource.setProperty("dt.database.url", "${testcontainers.postgresql.jdbc-url}");
+        MemoryConfigSource.setProperty("dt.database.username", "${testcontainers.postgresql.username}");
+        MemoryConfigSource.setProperty("dt.database.password", "${testcontainers.postgresql.password}");
+
         new DatabaseMigrationInitTask().execute(new InitTaskContext(ConfigProvider.getConfig(), dataSource));
 
         assertMigrationExecuted(/* expectExecuted */ true);
     }
 
     @Test
-    @WithConfigProperty(value = {
-            "alpine.database.url=${testcontainers.postgresql.jdbc-url}",
-            "alpine.database.username=username",
-            "alpine.database.password=password",
-            "init.tasks.database.username=${testcontainers.postgresql.username}",
-            "init.tasks.database.password=${testcontainers.postgresql.password}"
-    })
     public void testWithMigrationCredentials() throws Exception {
+        MemoryConfigSource.setProperty("dt.database.url", "${testcontainers.postgresql.jdbc-url}");
+        MemoryConfigSource.setProperty("dt.database.username", "username");
+        MemoryConfigSource.setProperty("dt.database.password", "password");
+        MemoryConfigSource.setProperty("dt.init.tasks.database.username", "${testcontainers.postgresql.username}");
+        MemoryConfigSource.setProperty("dt.init.tasks.database.password", "${testcontainers.postgresql.password}");
+
         new DatabaseMigrationInitTask().execute(new InitTaskContext(ConfigProvider.getConfig(), dataSource));
 
         assertMigrationExecuted(/* expectExecuted */ true);
