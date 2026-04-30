@@ -2,10 +2,10 @@
 .idea/
 docs/
 scripts/
-src/
+# src/
 !src/main/docker/create-jre.sh
 !src/main/docker/logback-json.xml
-target/
+# target/
 !target/*.jar
 !target/**/*.jar
 /*.md

@@ -22,3 +22,6 @@ target/
 .idea/*
 !.idea/icon.svg
 !.idea/runConfigurations/
+
+# LM Specific
+Combined_pem.pem

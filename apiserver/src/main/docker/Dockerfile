@@ -24,7 +24,8 @@ ARG DATA_DIR=/data/
 ARG UID=1000
 ARG GID=1000
 
-FROM eclipse-temurin:25.0.2_10-jdk-alpine@sha256:d3f9f60ad2040582239e2977ee753d598787d8b064ca39a8e131860165dd81fb AS jre-build
+# Using a non-alpine version unlike open source hyades
+FROM eclipse-temurin@sha256:cde9b1a7777579c5b443e86146d30b5f730c0f047762ee810672e3d89f9da646 AS jre-build
 
 WORKDIR /work
 
@@ -34,7 +35,8 @@ COPY ./target/dependency-track-apiserver.jar ./
 
 RUN ./create-jre.sh -i ./dependency-track-apiserver.jar -o ./jre
 
-FROM alpine:3.23@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11
+# Open source hyades is using an alpine container, but that complicates things
+FROM debian:bookworm
 
 ARG COMMIT_SHA
 ARG APP_VERSION
@@ -59,17 +61,39 @@ ENV TZ=Etc/UTC \
     HOME=${DATA_DIR} \
     # Default notification publisher templates override environment variables
     DEFAULT_TEMPLATES_OVERRIDE_ENABLED=false \
-    DEFAULT_TEMPLATES_OVERRIDE_BASE_DIRECTORY=${DATA_DIR}
+    DEFAULT_TEMPLATES_OVERRIDE_BASE_DIRECTORY=${DATA_DIR} \
+    # LM Proxy
+    http_proxy="http://proxy-zsgov.external.lmco.com:80" \
+    HTTP_PROXY="$http_proxy" \
+    https_proxy="http://proxy-zsgov.external.lmco.com:80" \
+    HTTPS_PROXY="$https_proxy" \
+    no_proxy="lmco.com,localdomain,localhost,127.0.0.1,.amazonaws.com,.lmco.com" \
+    NO_PROXY="$no_proxy"
+
+# LM Certs
+COPY /src/main/docker/Combined_pem.pem /usr/local/share/ca-certificates/Combined_pem.crt
+
+RUN apt-get update \
+    && apt-get install -y ca-certificates curl \
+    && update-ca-certificates \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo \
+    "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" | \
+        tee /etc/apt/sources.list.d/docker.list > /dev/null \
+    && apt-get update \
+    && apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
 # Create the directories where the JAR will be deployed to (${APP_DIR}) and Dependency-Track will store its data (${DATA_DIR})
 # Create a user and assign home directory to a ${DATA_DIR}
 # Ensure UID 1000 & GID 1000 own all the needed directories
+# Short flags are ambiguous, so use the fully qualified flags
 RUN mkdir -p ${APP_DIR} ${DATA_DIR} \
-    && addgroup -S -g ${GID} dtrack \
-    && adduser -S -D -G dtrack -H -h ${DATA_DIR} -g "dtrack user" -s /bin/false -u ${UID} dtrack \
-    && chown -R dtrack:0 ${DATA_DIR} ${APP_DIR} \
-    && chmod -R g=u ${DATA_DIR} ${APP_DIR} \
-    && apk add --no-cache gcompat tzdata curl
+    && addgroup --system --gid ${GID} dtrack \
+    && adduser --system --disabled-login --no-create-home --home ${DATA_DIR} --gecos "dtrack user"  --shell /bin/false -u ${UID} dtrack-user \
+    && chown -R dtrack-user:root ${DATA_DIR} ${APP_DIR} \
+    && chmod -R g=u ${DATA_DIR} ${APP_DIR}
 
 WORKDIR ${APP_DIR}
 USER ${UID}
@@ -97,10 +121,11 @@ EXPOSE 8080
 EXPOSE 9000
 
 # Health check against the management port
-HEALTHCHECK --interval=30s --start-period=60s --timeout=3s CMD [ \
-    "/bin/sh", "-c", \
-    "curl -f -s --max-time 3 --noproxy '*' -o /dev/null http://127.0.0.1:9000/health" \
-]
+# Health check doesn't seem to work with podman, so commenting out for now
+# HEALTHCHECK --interval=30s --start-period=60s --timeout=3s CMD [ \
+#     "/bin/sh", "-c", \
+#     "curl -f -s --max-time 3 --noproxy '*' -o /dev/null http://127.0.0.1:9000/health" \
+# ]
 
 # metadata labels
 LABEL \
