@@ -78,6 +78,44 @@ class UserResourceAuthenticatedTest extends ResourceTest {
     }
 
     @Test
+    public void getUsersTest() {
+        qm.createLdapUser("testldapuser");
+        qm.createOidcUser("testoidcuser");
+        Response responseAll = jersey.target(V1_USER)
+                .request()
+                .header(X_API_KEY, apiKey)
+                .get(Response.class);
+
+        Response responseLdap = jersey.target(V1_USER)
+                .queryParam("type", "ldap")
+                .request()
+                .header(X_API_KEY, apiKey)
+                .get(Response.class);
+
+        Response responseManaged = jersey.target(V1_USER)
+                .queryParam("type", "managed")
+                .request()
+                .header(X_API_KEY, apiKey)
+                .get(Response.class);
+
+        Response responseOidc = jersey.target(V1_USER)
+                .queryParam("type", "oidc")
+                .request()
+                .header(X_API_KEY, apiKey)
+                .get(Response.class);
+        // add response values to a list called allResonses
+        List<Integer> statuses = List.of(
+            responseAll.getStatus(), responseLdap.getStatus(),
+            responseManaged.getStatus(), responseOidc.getStatus()
+            );
+        List<Integer> expectedStatuses = List.of(200, 200, 200, 200);
+        Assert.assertEquals(expectedStatuses, statuses);
+
+        JsonArray users = parseJsonArray(responseAll);
+        Assert.assertTrue(users.toArray().length >= 3);
+    }
+
+    @Test
     void getManagedUsersTest() {
         initializeWithPermissions(Permissions.ACCESS_MANAGEMENT_READ);
 

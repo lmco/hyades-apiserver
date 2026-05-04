@@ -36,6 +36,8 @@ import org.dependencytrack.secret.management.SecretManager;
 import org.dependencytrack.tasks.DefectDojoUploadTask;
 import org.dependencytrack.tasks.EpssMirrorTask;
 import org.dependencytrack.tasks.FortifySscUploadTask;
+import org.dependencytrack.tasks.GitLabIntegrationStateTask;
+import org.dependencytrack.tasks.GitLabSyncTask;
 import org.dependencytrack.tasks.InternalComponentIdentificationTask;
 import org.dependencytrack.tasks.KennaSecurityUploadTask;
 import org.dependencytrack.tasks.LdapSyncTaskWrapper;
@@ -94,6 +96,8 @@ public class EventSubsystemInitializer implements ServletContextListener {
         requireNonNull(secretManager, "secretManager has not been initialized");
 
         eventService.subscribe(LdapSyncEvent.class, new LdapSyncTaskWrapper());
+        eventService.subscribe(GitLabIntegrationStateEvent.class, new GitLabIntegrationStateTask());
+        eventService.subscribe(GitLabSyncEvent.class, new GitLabSyncTask());
         eventService.subscribe(
                 PortfolioVulnerabilityAnalysisEvent.class,
                 new VulnerabilityAnalysisTask(dexEngine));
@@ -121,6 +125,8 @@ public class EventSubsystemInitializer implements ServletContextListener {
                 .orElse(Duration.ofSeconds(30));
 
         eventService.unsubscribe(LdapSyncTaskWrapper.class);
+        eventService.unsubscribe(GitLabIntegrationStateTask.class);
+        eventService.unsubscribe(GitLabSyncTask.class);
         eventService.unsubscribe(VulnerabilityAnalysisTask.class);
         eventService.unsubscribe(VulnerabilityMetricsUpdateTask.class);
         eventService.unsubscribe(FortifySscUploadTask.class);
