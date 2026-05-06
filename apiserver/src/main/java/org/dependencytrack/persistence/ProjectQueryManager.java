@@ -33,7 +33,6 @@ import org.dependencytrack.model.ProjectCollectionLogic;
 import org.dependencytrack.model.ProjectMetrics;
 import org.dependencytrack.model.ProjectProperty;
 import org.dependencytrack.model.ProjectVersion;
-import org.dependencytrack.model.Role;
 import org.dependencytrack.model.Tag;
 import org.dependencytrack.persistence.jdbi.MetricsDao;
 import org.slf4j.Logger;
@@ -570,7 +569,7 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
      * @return True if ACL was updated
      */
     @Override
-    public boolean updateNewProjectACL(Project project, Principal principal, Role role) {
+    public boolean updateNewProjectACL(Project project, Principal principal) {
         final boolean aclEnabled = isEnabled(ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED);
         switch (principal) {
             case ApiKey apiKey when aclEnabled -> {
@@ -587,7 +586,6 @@ final class ProjectQueryManager extends QueryManager implements IQueryManager {
                 }
             }
             case User user when aclEnabled -> {
-                addRoleToUser(getUser(user.getUsername()), getRole(role.getUuid().toString()), project);
                 return true;
             }
             default -> {

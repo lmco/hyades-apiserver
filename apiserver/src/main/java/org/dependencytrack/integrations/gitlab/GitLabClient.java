@@ -43,9 +43,11 @@ import org.apache.http.client.methods.HttpPost;
 import org.apache.http.client.utils.URIBuilder;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.util.EntityUtils;
+import org.dependencytrack.common.ConfigKeys;
 import org.dependencytrack.common.HttpClientPool;
+import org.eclipse.microprofile.config.Config;
+import org.eclipse.microprofile.config.ConfigProvider;
 
-import alpine.Config;
 import alpine.common.logging.Logger;
 
 import net.minidev.json.JSONArray;
@@ -70,17 +72,17 @@ public class GitLabClient {
     public static final String USER_ACCESS_LEVEL_CLAIM = "user_access_level";
 
     public GitLabClient(final String accessToken) {
-        this(accessToken, Config.getInstance(), null, false);
+        this(accessToken, ConfigProvider.getConfig(), null, false);
     }
 
     public GitLabClient(final String accessToken, final List<String> topics, final boolean includeArchived) {
-        this(accessToken, Config.getInstance(), topics, includeArchived);
+        this(accessToken, ConfigProvider.getConfig(), topics, includeArchived);
     }
 
     public GitLabClient(final String accessToken, final Config config, final List<String> topics,
             final boolean includeArchived) {
         this.accessToken = accessToken;
-        this.baseURL = URI.create(config.getProperty(Config.AlpineKey.OIDC_ISSUER));
+        this.baseURL = URI.create(config.getConfigValue(ConfigKeys.OIDC_ISSUER).getValue());
         this.config = config;
         this.includeArchived = includeArchived;
         this.topics = topics;

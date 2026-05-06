@@ -27,7 +27,6 @@ import java.util.Objects;
 import org.dependencytrack.auth.Permissions;
 import org.dependencytrack.integrations.AbstractIntegrationPoint;
 import org.dependencytrack.model.ConfigPropertyConstants;
-import org.dependencytrack.model.Role;
 import org.dependencytrack.persistence.QueryManager;
 
 import alpine.common.logging.Logger;
@@ -58,14 +57,12 @@ public class GitLabIntegrationStateChanger extends AbstractIntegrationPoint {
             if (isEnabled) {
                 LOGGER.info("Enabling GitLab integration");
                 setConfigProperty(ConfigPropertyConstants.ACCESS_MANAGEMENT_ACL_ENABLED, "true");
-                createGitLabRoles();
                 createGitLabDefaultTeam();
 
                 return;
             }
 
             LOGGER.info("Disabling GitLab integration");
-            removeGitLabRoles();
             removeGitLabDefaultTeam();
             setConfigProperty(ConfigPropertyConstants.GITLAB_SBOM_PUSH_ENABLED, "false");
         } catch (RuntimeException ex) {
@@ -96,23 +93,6 @@ public class GitLabIntegrationStateChanger extends AbstractIntegrationPoint {
         }
     }
 
-    private void createGitLabRoles() {
-        if (PERMISSIONS_MAP.isEmpty())
-            populatePermissionsMap(qm);
-
-        for (GitLabRole role : GitLabRole.values())
-            try {
-                if (qm.getRoleByName(role.getDescription()) == null) {
-                    qm.createRole(role.getDescription(), qm.getPermissionsByName(role.getPermissions()));
-                    LOGGER.info("Created GitLab role: " + role.getDescription());
-                } else {
-                    LOGGER.info("GitLab role already exists: " + role.getDescription());
-                }
-            } catch (Exception ex) {
-                LOGGER.error("An error occurred while creating GitLab roles", ex);
-            }
-    }
-
     private void removeGitLabDefaultTeam() {
         try (final QueryManager qm = new QueryManager()) {
             final Team team = qm.getTeam(DEFAULT_TEAM);
@@ -135,26 +115,6 @@ public class GitLabIntegrationStateChanger extends AbstractIntegrationPoint {
         } catch (Exception ex) {
             LOGGER.error("An error occurred while removing GitLab team", ex);
             throw new RuntimeException("Failed to remove GitLab team", ex);
-        }
-
-    }
-
-    private void removeGitLabRoles() {
-        try (final QueryManager qm = new QueryManager()) {
-            for (GitLabRole role : GitLabRole.values()) {
-                Role targetRole = qm.getRoleByName(role.getDescription());
-                if (targetRole == null) {
-                    LOGGER.info("GitLab role does not exist: " + role.getDescription());
-                    continue;
-                }
-
-                qm.delete(targetRole);
-                LOGGER.info("Removed GitLab role: " + role.getDescription());
-            }
-
-        } catch (Exception ex) {
-            LOGGER.error("An error occurred while removing GitLab roles", ex);
-            throw new RuntimeException("Failed to remove GitLab roles", ex);
         }
 
     }

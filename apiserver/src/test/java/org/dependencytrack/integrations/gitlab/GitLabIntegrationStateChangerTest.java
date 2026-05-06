@@ -24,7 +24,6 @@ import alpine.model.Team;
 
 import org.dependencytrack.PersistenceCapableTest;
 import org.dependencytrack.auth.Permissions;
-import org.dependencytrack.model.Role;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -44,7 +43,6 @@ import static org.mockito.Mockito.when;
 public class GitLabIntegrationStateChangerTest extends PersistenceCapableTest {
 
     private GitLabIntegrationStateChanger stateChanger;
-    private List<Role> roles;
 
     @Before
     public void setUp() {
@@ -61,7 +59,7 @@ public class GitLabIntegrationStateChangerTest extends PersistenceCapableTest {
     }
 
     /**
-     * Validates that the when integration is enabled the roles are created.
+     * Validates that the when integration is enabled the team is created.
      */
     @Test
     public void testEnable() {
@@ -91,11 +89,6 @@ public class GitLabIntegrationStateChangerTest extends PersistenceCapableTest {
                 null);
 
         stateChanger.setState(true);
-        roles = qm.getRoles();
-        Assert.assertEquals(GitLabRole.values().length, roles.size());
-        for (GitLabRole role : GitLabRole.values()) {
-            Assert.assertNotNull(qm.getRoleByName(role.getDescription()));
-        }
         List<Team> teamsList = qm.getTeams().getList(Team.class);
 
         Assert.assertEquals(teamsList.size(), 1);
@@ -103,7 +96,7 @@ public class GitLabIntegrationStateChangerTest extends PersistenceCapableTest {
     }
 
     /**
-     * Validates that the when integration is disabled the roles are removed.
+     * Validates that the when integration is disabled the teams is removed.
      */
     @Test
     public void testDisable() {
@@ -136,23 +129,16 @@ public class GitLabIntegrationStateChangerTest extends PersistenceCapableTest {
                 GITLAB_API_KEY.getPropertyType(),
                 null);
 
-        // Create roles and team to be removed
+        // Create team to be removed
         stateChanger.setState(true);
-        roles = qm.getRoles();
-        Assert.assertEquals(GitLabRole.values().length, roles.size());
-        for (GitLabRole role : GitLabRole.values()) {
-            Assert.assertNotNull(qm.getRoleByName(role.getDescription()));
-        }
         List<Team> teamsList = qm.getTeams().getList(Team.class);
         Assert.assertEquals(teamsList.size(), 1);
         Assert.assertEquals(teamsList.get(0).getName(), "GitLab Users");
 
         // Disable the integration
-        // and verify that the roles and team are removed
+        // and verify that the team is removed
         stateChanger.setState(false);
-        roles = qm.getRoles();
         teamsList = qm.getTeams().getList(Team.class);
-        Assert.assertEquals(0, roles.size());
         Assert.assertEquals(0, teamsList.size());
     }
 

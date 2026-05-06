@@ -25,7 +25,6 @@ import java.net.URISyntaxException;
 import java.io.IOException;
 import org.dependencytrack.PersistenceCapableTest;
 import org.dependencytrack.model.Project;
-import org.dependencytrack.model.UserProjectRole;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.mockito.InjectMocks;
@@ -105,13 +104,6 @@ public class GitLabSyncerTest extends PersistenceCapableTest {
      */
     @Test
     public void testSynchronizeSuccess() {
-        qm.createRole("GitLab Project Guest", new ArrayList<>());
-        qm.createRole("GitLab Project Maintainer", new ArrayList<>());
-        qm.createRole("GitLab Project Reporter", new ArrayList<>());
-        qm.createRole("GitLab Project Developer", new ArrayList<>());
-        qm.createRole("GitLab Project Planner", new ArrayList<>());
-        qm.createRole("GitLab Project Owner", new ArrayList<>());
-
         qm.createConfigProperty(
                 GITLAB_ENABLED.getGroupName(),
                 GITLAB_ENABLED.getPropertyName(),
@@ -126,8 +118,8 @@ public class GitLabSyncerTest extends PersistenceCapableTest {
         try {
             when(mockClient.getGitLabProjects())
                     .thenReturn(List.of(
-                            new GitLabProject("this/test/project1", GitLabRole.MAINTAINER),
-                            new GitLabProject("that/test/project2", GitLabRole.REPORTER)));
+                            new GitLabProject("this/test/project1", "GitLab Project Maintainer"),
+                            new GitLabProject("that/test/project2", "GitLab Project Reporter")));
             extension.synchronize();
         } catch (IOException | URISyntaxException ex) {
             Assert.fail("Exception " + ex);
@@ -138,12 +130,5 @@ public class GitLabSyncerTest extends PersistenceCapableTest {
 
         Project testProject2 = qm.getProject("that/test/project2", null);
         Assert.assertFalse(testProject2.isActive());
-
-        List<UserProjectRole> testRoles = qm.getUserRoles("test_user");
-        Assert.assertEquals(2, testRoles.size());
-        Assert.assertEquals("this/test/project1", testRoles.get(0).getProject().getName());
-        Assert.assertEquals("GitLab Project Maintainer", testRoles.get(0).getRole().getName());
-        Assert.assertEquals("that/test/project2", testRoles.get(1).getProject().getName());
-        Assert.assertEquals("GitLab Project Reporter", testRoles.get(1).getRole().getName());
     }
 }

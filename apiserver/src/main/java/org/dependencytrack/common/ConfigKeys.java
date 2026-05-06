@@ -60,6 +60,12 @@ public final class ConfigKeys {
 
     public static final String TELEMETRY_SUBMISSION_ENABLED_DEFAULT = "dt.telemetry.submission.enabled.default";
 
+    public static final String OIDC_TEAMS_CLAIM = "dt.oidc.teams.claim";
+    public static final String OIDC_USERNAME_CLAIM = "dt.oidc.username.claim";
+    public static final String OIDC_ISSUER = "dt.oidc.issuer";
+
+    public static final String APPLICATION_NAME = "alpine.build-info.application.name";
+
     private ConfigKeys() {
     }
 

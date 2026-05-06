@@ -18,7 +18,6 @@
  */
 package org.dependencytrack.resources.v1;
 
-import alpine.Config;
 import alpine.model.ConfigProperty;
 import alpine.server.auth.PermissionRequired;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -63,6 +62,7 @@ import org.cyclonedx.CycloneDxMediaType;
 import org.cyclonedx.Version;
 import org.cyclonedx.exception.GeneratorException;
 import org.dependencytrack.auth.Permissions;
+import org.dependencytrack.common.ConfigKeys;
 import org.dependencytrack.dex.engine.api.DexEngine;
 import org.dependencytrack.dex.engine.api.WorkflowRunStatus;
 import org.dependencytrack.dex.engine.api.request.CreateWorkflowRunRequest;
@@ -70,11 +70,9 @@ import org.dependencytrack.dex.engine.api.request.ExistsWorkflowRunRequest;
 import org.dependencytrack.filestorage.api.FileStorage;
 import org.dependencytrack.filestorage.proto.v1.FileMetadata;
 import org.dependencytrack.integrations.gitlab.GitLabClient;
-import org.dependencytrack.integrations.gitlab.GitLabRole;
 import org.dependencytrack.model.BomValidationMode;
 import org.dependencytrack.model.Component;
 import org.dependencytrack.model.ConfigPropertyConstants;
-import org.dependencytrack.model.Role;
 import org.dependencytrack.model.Project;
 import org.dependencytrack.model.Tag;
 import org.dependencytrack.model.validation.ValidUuid;
@@ -94,6 +92,8 @@ import org.dependencytrack.resources.v1.vo.BomSubmitRequest;
 import org.dependencytrack.resources.v1.vo.BomUploadResponse;
 import org.dependencytrack.resources.v1.vo.IsTokenBeingProcessedResponse;
 import org.dependencytrack.tasks.ImportBomWorkflow;
+import org.eclipse.microprofile.config.Config;
+import org.eclipse.microprofile.config.ConfigProvider;
 import org.glassfish.jersey.media.multipart.BodyPartEntity;
 import org.glassfish.jersey.media.multipart.FormDataBodyPart;
 import org.glassfish.jersey.media.multipart.FormDataParam;
@@ -490,7 +490,6 @@ public class BomResource extends AbstractApiResource {
             @ApiResponse(responseCode = "404", description = "The project could not be found")
     })
     @PermissionRequired(Permissions.Constants.BOM_UPLOAD)
-    @ResourceAccessRequired
     public Response uploadBomGitLab(
             @FormDataParam("gitLabToken") String idToken,
             @FormDataParam("bom") String bom,
@@ -515,7 +514,7 @@ public class BomResource extends AbstractApiResource {
                         .build();
 
             ConfigProperty gitLabUrlProperty = propertyGetter.apply(GITLAB_URL);
-            String alpineIssuerProperty = Config.getInstance().getProperty(Config.AlpineKey.OIDC_ISSUER);
+            String alpineIssuerProperty = ConfigProvider.getConfig().getConfigValue(ConfigKeys.OIDC_ISSUER).getValue();
             String gitlabUrl = StringUtils.defaultIfBlank(alpineIssuerProperty, gitLabUrlProperty.getPropertyValue());
             ConfigProperty gitLabJwksPathProperty = propertyGetter.apply(GITLAB_JWKS_PATH);
 
@@ -543,16 +542,11 @@ public class BomResource extends AbstractApiResource {
                         .entity("Missing user_access_level claim in token").build();
             }
 
-            final GitLabRole gitLabRole = GitLabRole.valueOf(accessLevel.toUpperCase());
-            Role role = (gitLabRole != null)
-                    ? qm.getRoleByName(gitLabRole.getDescription())
-                    : null;
-
             if (project == null) {
                 if (autoCreateProject
                         && Set.of("owner", "maintainer")
                                 .contains(claims.get(GitLabClient.USER_ACCESS_LEVEL_CLAIM, String.class)))
-                    createNewProject(projectName, projectVersion, null, null, isLatest, role);
+                    createNewProject(projectName, projectVersion, null, null, isLatest);
                 else
                     return Response.status(Response.Status.UNAUTHORIZED)
                             .entity("The principal does not have permission to create project.").build();
@@ -1012,7 +1006,7 @@ public class BomResource extends AbstractApiResource {
 
     private void createNewProject(String name, String version,  
             List<org.dependencytrack.model.Tag> tags, Project parent,
-            boolean isLatest, Role role) {
+            boolean isLatest) {
         try (QueryManager qm = new QueryManager()) {
             final String trimmedProjectName = StringUtils.trimToNull(name);
             final String trimmedProjectVersion = StringUtils.trimToNull(version);
@@ -1027,7 +1021,7 @@ public class BomResource extends AbstractApiResource {
                     trimmedProjectVersion, tags, parent,
                     null, null, isLatest, true);
             Principal principal = getPrincipal();
-            qm.updateNewProjectACL(project, principal, role);
+            qm.updateNewProjectACL(project, principal);
         }
     }
 }

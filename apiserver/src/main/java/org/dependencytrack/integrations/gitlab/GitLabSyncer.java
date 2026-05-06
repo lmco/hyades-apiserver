@@ -34,7 +34,6 @@ import java.util.stream.Collectors;
 import org.dependencytrack.integrations.AbstractIntegrationPoint;
 import org.dependencytrack.integrations.PermissionsSyncer;
 import org.dependencytrack.model.Project;
-import org.dependencytrack.model.Role;
 
 import alpine.common.logging.Logger;
 import alpine.model.OidcUser;
@@ -85,9 +84,6 @@ public class GitLabSyncer extends AbstractIntegrationPoint implements Permission
     private List<Project> createProjects(final List<GitLabProject> gitLabProjects) {
         final List<Project> projects = new ArrayList<>();
 
-        final Map<GitLabRole, Role> roleMap = Arrays.stream(GitLabRole.values())
-                .collect(Collectors.toMap(Function.identity(), role -> qm.getRoleByName(role.getDescription())));
-
         for (var gitLabProject : gitLabProjects) {
             qm.runInTransaction(() -> {
                 if (!qm.tryAcquireAdvisoryLock(gitLabProject.getFullPath()))
@@ -109,7 +105,6 @@ public class GitLabSyncer extends AbstractIntegrationPoint implements Permission
                 if (!project.isActive() && project.getInactiveSince() == null)
                     project.setInactiveSince(new Date());
 
-                qm.addRoleToUser(user, roleMap.get(gitLabProject.getMaxAccessLevel().stringValue()), project);
                 projects.add(qm.updateProject(project, false));
             });
         }

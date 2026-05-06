@@ -480,8 +480,8 @@ public class QueryManager extends AlpineQueryManager {
         return getProjectQueryManager().updateProject(transientProject, commitIndex);
     }
 
-    public boolean updateNewProjectACL(Project transientProject, Principal principal, Role role) {
-        return getProjectQueryManager().updateNewProjectACL(transientProject, principal, role);
+    public boolean updateNewProjectACL(Project transientProject, Principal principal) {
+        return getProjectQueryManager().updateNewProjectACL(transientProject, principal);
     }
 
     public ProjectProperty createProjectProperty(final Project project, final String groupName, final String propertyName,

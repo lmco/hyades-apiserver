@@ -18,7 +18,6 @@
  */
 package org.dependencytrack.integrations.gitlab;
 
-import alpine.Config;
 import jakarta.ws.rs.core.MediaType;
 import net.minidev.json.JSONArray;
 
@@ -42,7 +41,10 @@ import java.util.Arrays;
 import java.util.List;
 
 import org.apache.http.HttpHeaders;
+import org.dependencytrack.common.ConfigKeys;
 import org.dependencytrack.event.kafka.KafkaProducerInitializer;
+import org.eclipse.microprofile.config.Config;
+import org.eclipse.microprofile.config.ConfigProvider;
 import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
@@ -55,11 +57,6 @@ public class GitLabClientTest {
 
     @Rule
     public WireMockRule wireMockRule = new WireMockRule();
-
-    @BeforeClass
-    public static void beforeClass() {
-        Config.enableUnitTests();
-    }
 
     @AfterClass
     public static void after() {
@@ -76,10 +73,10 @@ public class GitLabClientTest {
     @Test
     public void testConstructorWithAccessTokenAndConfig() {
         String accessToken = "my-access-token";
-        Config config = Config.getInstance();
+        Config config = ConfigProvider.getConfig();
         GitLabClient client = new GitLabClient(accessToken, config, null, false);
         Assert.assertNotNull(client);
-        Assert.assertEquals("Dependency-Track", client.getConfig().getApplicationName());
+        Assert.assertEquals("Dependency-Track", client.getConfig().getConfigValue(ConfigKeys.APPLICATION_NAME));
     }
 
     @Test
@@ -107,7 +104,7 @@ public class GitLabClientTest {
 
         final var configMock = mock(Config.class);
 
-        when(configMock.getProperty(eq(Config.AlpineKey.OIDC_ISSUER))).thenReturn(wireMockRule.baseUrl());
+        when(configMock.getConfigValue(eq(ConfigKeys.OIDC_ISSUER))).thenReturn(wireMockRule.baseUrl());
 
         GitLabClient gitLabClient = new GitLabClient(accessToken, configMock, null, false);
 
@@ -142,7 +139,7 @@ public class GitLabClientTest {
 
         final var configMock = mock(Config.class);
 
-        when(configMock.getProperty(eq(Config.AlpineKey.OIDC_ISSUER))).thenReturn(wireMockRule.baseUrl());
+        when(configMock.getConfigValue(eq(ConfigKeys.OIDC_ISSUER))).thenReturn(wireMockRule.baseUrl());
         List<String> topics = Arrays.asList("topic1");
 
         GitLabClient gitLabClient = new GitLabClient(accessToken, configMock, topics, false);

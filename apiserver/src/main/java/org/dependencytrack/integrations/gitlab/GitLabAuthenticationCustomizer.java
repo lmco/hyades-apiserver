@@ -18,7 +18,6 @@
  */
 package org.dependencytrack.integrations.gitlab;
 
-import alpine.Config;
 import alpine.event.framework.Event;
 import alpine.model.OidcUser;
 import alpine.server.auth.DefaultOidcAuthenticationCustomizer;
@@ -28,8 +27,11 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
+import org.dependencytrack.common.ConfigKeys;
 import org.dependencytrack.event.GitLabSyncEvent;
 import org.dependencytrack.persistence.QueryManager;
+import org.eclipse.microprofile.config.Config;
+import org.eclipse.microprofile.config.ConfigProvider;
 
 import com.nimbusds.openid.connect.sdk.claims.ClaimsSet;
 import com.nimbusds.openid.connect.sdk.claims.UserInfo;
@@ -39,8 +41,10 @@ public class GitLabAuthenticationCustomizer extends DefaultOidcAuthenticationCus
 
     @Override
     public OidcProfile createProfile(ClaimsSet claimsSet) {
-        final String teamsClaimName = Config.getInstance().getProperty(Config.AlpineKey.OIDC_TEAMS_CLAIM);
-        String usernameClaimName = Config.getInstance().getProperty(Config.AlpineKey.OIDC_USERNAME_CLAIM);
+        Config config = ConfigProvider.getConfig();
+        config.getConfigValue(ConfigKeys.OIDC_TEAMS_CLAIM);
+        final String teamsClaimName = config.getConfigValue(ConfigKeys.OIDC_TEAMS_CLAIM).getValue();
+        String usernameClaimName = config.getConfigValue(ConfigKeys.OIDC_USERNAME_CLAIM).getValue();
         final var profile = new OidcProfile();
 
         if (claimsSet.getStringClaim("user_login") != null)
