@@ -47,8 +47,8 @@ import org.dependencytrack.common.ConfigKeys;
 import org.dependencytrack.common.HttpClientPool;
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.config.ConfigProvider;
-
-import alpine.common.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import net.minidev.json.JSONArray;
 import net.minidev.json.JSONObject;
@@ -56,7 +56,7 @@ import net.minidev.json.JSONValue;
 
 public class GitLabClient {
 
-    private static final Logger LOGGER = Logger.getLogger(GitLabClient.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(GitLabClient.class);
     private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyy-MM-dd");
     private static final String GRAPHQL_ENDPOINT = "/api/graphql";
 

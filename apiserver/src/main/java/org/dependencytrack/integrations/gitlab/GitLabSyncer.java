@@ -34,13 +34,14 @@ import java.util.stream.Collectors;
 import org.dependencytrack.integrations.AbstractIntegrationPoint;
 import org.dependencytrack.integrations.PermissionsSyncer;
 import org.dependencytrack.model.Project;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import alpine.common.logging.Logger;
 import alpine.model.OidcUser;
 
 public class GitLabSyncer extends AbstractIntegrationPoint implements PermissionsSyncer {
 
-    private static final Logger LOGGER = Logger.getLogger(GitLabSyncer.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(GitLabSyncer.class);
     private static final String INTEGRATIONS_GROUP = GITLAB_ENABLED.getGroupName();
     private static final String GENERAL_GROUP = GENERAL_BASE_URL.getGroupName();
     private static final String ROLE_CLAIM_PREFIX = "https://gitlab.org/claims/groups/";

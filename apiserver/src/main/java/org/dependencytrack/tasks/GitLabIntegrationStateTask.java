@@ -17,8 +17,9 @@
  * Copyright (c) OWASP Foundation. All Rights Reserved.
  */
 package org.dependencytrack.tasks;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import alpine.common.logging.Logger;
 import alpine.event.framework.Event;
 import alpine.event.framework.LoggableSubscriber;
 import alpine.model.ConfigProperty;
@@ -32,7 +33,7 @@ import org.dependencytrack.event.GitLabIntegrationStateEvent;
 
 public class GitLabIntegrationStateTask implements LoggableSubscriber {
 
-    private static final Logger LOGGER = Logger.getLogger(GitLabIntegrationStateTask.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(GitLabIntegrationStateTask.class);
     private final boolean isEnabled;
 
     public GitLabIntegrationStateTask() {

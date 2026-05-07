@@ -28,8 +28,9 @@ import org.dependencytrack.auth.Permissions;
 import org.dependencytrack.integrations.AbstractIntegrationPoint;
 import org.dependencytrack.model.ConfigPropertyConstants;
 import org.dependencytrack.persistence.QueryManager;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import alpine.common.logging.Logger;
 import alpine.model.ApiKey;
 import alpine.model.ConfigProperty;
 import alpine.model.Permission;
@@ -38,7 +39,7 @@ import alpine.security.crypto.DataEncryption;
 
 public class GitLabIntegrationStateChanger extends AbstractIntegrationPoint {
 
-    private static final Logger LOGGER = Logger.getLogger(GitLabIntegrationStateChanger.class);
+    private static final Logger LOGGER = LoggerFactory.getLogger(GitLabIntegrationStateChanger.class);
     private static final String DEFAULT_TEAM = "GitLab Users";
     private final Map<String, Permission> PERMISSIONS_MAP = new HashMap<>();
 
