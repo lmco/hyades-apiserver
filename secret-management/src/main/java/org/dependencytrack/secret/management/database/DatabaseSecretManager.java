@@ -31,6 +31,7 @@ import javax.sql.DataSource;
 import java.io.Closeable;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
@@ -273,6 +274,32 @@ final class DatabaseSecretManager implements SecretManager {
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("Failed to decrypt secret value", e);
         }
+    }
+
+    public @Nullable String getEncryptedValue(String name) {
+        requireValidName(name);
+
+        final byte[] cipherText;
+
+        try (final Connection connection = dataSource.getConnection();
+             final PreparedStatement ps = connection.prepareStatement("""
+                     SELECT "VALUE"
+                       FROM "SECRET"
+                      WHERE "NAME" = ?
+                     """)) {
+            ps.setString(1, name);
+
+            final ResultSet rs = ps.executeQuery();
+            if (!rs.next()) {
+                return null;
+            }
+
+            cipherText = rs.getBytes(1);
+        } catch (SQLException e) {
+            throw new IllegalStateException("Failed to query secret value", e);
+        }
+
+        return new String(cipherText, StandardCharsets.UTF_8);
     }
 
     record ListSecretsPageToken(String lastName) implements PageToken {

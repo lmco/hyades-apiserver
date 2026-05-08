@@ -28,6 +28,7 @@ import org.dependencytrack.auth.Permissions;
 import org.dependencytrack.integrations.AbstractIntegrationPoint;
 import org.dependencytrack.model.ConfigPropertyConstants;
 import org.dependencytrack.persistence.QueryManager;
+import org.dependencytrack.secret.management.database.DatabaseSecretManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -35,13 +36,17 @@ import alpine.model.ApiKey;
 import alpine.model.ConfigProperty;
 import alpine.model.Permission;
 import alpine.model.Team;
-import alpine.security.crypto.DataEncryption;
 
 public class GitLabIntegrationStateChanger extends AbstractIntegrationPoint {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GitLabIntegrationStateChanger.class);
     private static final String DEFAULT_TEAM = "GitLab Users";
     private final Map<String, Permission> PERMISSIONS_MAP = new HashMap<>();
+    private final DatabaseSecretManager secretManager;
+
+    public GitLabIntegrationStateChanger(DatabaseSecretManager secretManager) {
+        this.secretManager = requireNonNull(secretManager, "secretManager must not be null");
+    }
 
     @Override
     public String name() {
@@ -86,8 +91,9 @@ public class GitLabIntegrationStateChanger extends AbstractIntegrationPoint {
             LOGGER.info("Created GitLab default user team");
 
             final ApiKey apiKey = qm.createApiKey(team);
+            secretManager.createSecret(ConfigPropertyConstants.GITLAB_API_KEY, "GitLab API Key", apiKey.getKey());
 
-            setConfigProperty(ConfigPropertyConstants.GITLAB_API_KEY, DataEncryption.encryptAsString(apiKey.getKey()));
+            setConfigProperty(ConfigPropertyConstants.GITLAB_API_KEY, secretManager.getEncryptedValue(ConfigPropertyConstants.GITLAB_API_KEY));
         } catch (Exception ex) {
             LOGGER.error("An error occurred while creating GitLab default user team", ex);
             throw new RuntimeException("Failed to create default team for GitLab users", ex);
