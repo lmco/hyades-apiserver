@@ -61,8 +61,7 @@ public enum ConfigPropertyConstants {
     GITLAB_SBOM_PUSH_ENABLED("integrations", "gitlab.sbom.push.enabled", "false", PropertyType.BOOLEAN, "Flag to enable/disable SBOM generation for GitLab projects", ConfigPropertyAccessMode.READ_WRITE),
     GITLAB_TOPICS("integrations", "gitlab.topics", "[]", PropertyType.STRING, "JSON array of topics to include when syncing GitLab projects", ConfigPropertyAccessMode.READ_WRITE),
     GITLAB_URL("integrations", "gitlab.url", "https://gitlab.com", PropertyType.URL, "Base URL to GitLab instance", ConfigPropertyAccessMode.READ_WRITE),
-    // TODO: ENCRYPTEDSTRING seems no longer in use, figure out ramifications of updating this a variable name pointing to the actual API key
-    GITLAB_API_KEY("integrations", "gitlab.api.key", null, PropertyType.ENCRYPTEDSTRING, "API Key for GitLab Users team", ConfigPropertyAccessMode.READ_WRITE),
+    GITLAB_API_KEY("integrations", "gitlab.apiKey", null, PropertyType.STRING, "API Key for GitLab Users team", ConfigPropertyAccessMode.READ_WRITE),
     GITLAB_JWKS_PATH("integrations", "gitlab.jwks.path", "/oauth/discovery/keys", PropertyType.STRING, "The URI path to the GitLab instance's JWKS endpoint", ConfigPropertyAccessMode.READ_WRITE),
 
     DEFECTDOJO_ENABLED("integrations", "defectdojo.enabled", "false", PropertyType.BOOLEAN, "Flag to enable/disable DefectDojo integration", ConfigPropertyAccessMode.READ_WRITE),

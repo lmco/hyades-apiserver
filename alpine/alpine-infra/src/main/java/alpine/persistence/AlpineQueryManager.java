@@ -43,6 +43,7 @@ import javax.jdo.PersistenceManager;
 import javax.jdo.Query;
 import java.security.Principal;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
 import java.util.List;
@@ -739,6 +740,21 @@ public class AlpineQueryManager extends AbstractAlpineQueryManager {
         final Query<Permission> query = pm.newQuery(Permission.class, "name == :name");
         query.setParameters(name);
         return executeAndCloseUnique(query);
+    }
+
+    /**
+     * Retrieves a list of {@link Permission}s having the given {@code names}.
+     * @param names The permission names
+     * @return a list of {@link Permission}s
+     * @since 5.6.0
+     */
+    public List<Permission> getPermissionsByName(final Collection<String> names) {
+        final Query<Permission> query = pm.newQuery(Permission.class)
+                .filter(":permissions.contains(name)")
+                .setNamedParameters(Map.of("permissions", names))
+                .orderBy("name ASC");
+
+        return executeAndCloseList(query);
     }
 
     /**

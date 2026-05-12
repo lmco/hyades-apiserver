@@ -1310,4 +1310,22 @@ public class QueryManager extends AlpineQueryManager {
         return "OFFSET %d FETCH NEXT %d ROWS ONLY".formatted(pagination.getOffset(), pagination.getLimit());
     }
 
+    /**
+     * @param lockName Name of the lock to acquire.
+     * @return {@code true} when the lock was acquired, otherwise {@code false}.
+     * @see <a href="https://www.postgresql.org/docs/current/explicit-locking.html#ADVISORY-LOCKS">Advisory lock docs</a>
+     * @since 5.6.0
+     */
+    public boolean tryAcquireAdvisoryLock(final String lockName) {
+        if (!pm.currentTransaction().isActive()) {
+            throw new IllegalStateException("Advisory lock can only be acquired in a transaction");
+        }
+
+        final Query<?> query = pm.newQuery(Query.SQL, /* language=SQL */ """
+                SELECT pg_try_advisory_xact_lock(?)
+                """);
+        query.setParameters(lockName.hashCode());
+        return executeAndCloseResultUnique(query, Boolean.class);
+    }
+
 }

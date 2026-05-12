@@ -91,9 +91,9 @@ public class GitLabIntegrationStateChanger extends AbstractIntegrationPoint {
             LOGGER.info("Created GitLab default user team");
 
             final ApiKey apiKey = qm.createApiKey(team);
-            secretManager.createSecret(ConfigPropertyConstants.GITLAB_API_KEY, "GitLab API Key", apiKey.getKey());
+            secretManager.createSecret(ConfigPropertyConstants.GITLAB_API_KEY.getPropertyName(), ConfigPropertyConstants.GITLAB_API_KEY.getDescription(), apiKey.getKey());
 
-            setConfigProperty(ConfigPropertyConstants.GITLAB_API_KEY, secretManager.getEncryptedValue(ConfigPropertyConstants.GITLAB_API_KEY));
+            setConfigProperty(ConfigPropertyConstants.GITLAB_API_KEY, secretManager.getEncryptedValue(ConfigPropertyConstants.GITLAB_API_KEY.getPropertyName()));
         } catch (Exception ex) {
             LOGGER.error("An error occurred while creating GitLab default user team", ex);
             throw new RuntimeException("Failed to create default team for GitLab users", ex);
