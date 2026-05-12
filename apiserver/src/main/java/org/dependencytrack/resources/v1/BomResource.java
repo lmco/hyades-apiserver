@@ -107,6 +107,7 @@ import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.security.Principal;
 import java.util.Arrays;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Collections;
 import java.util.List;
@@ -434,7 +435,7 @@ public class BomResource extends AbstractApiResource {
                                 }
                                 requireAccess(qm, parent, "Access to the specified parent project is forbidden");
                             }
-                            createNewProject(request.getProjectName(), request.getProjectVersion(), request.getProjectTags(), parent, request.isLatestProjectVersion(), null);
+                            createNewProject(request.getProjectName(), request.getProjectVersion(), request.getProjectTags(), parent, request.isLatest());
                             new JdoNotificationEmitter(qm).emit(
                                     createProjectCreatedNotification(
                                             NotificationModelConverter.convert(project)));
@@ -706,7 +707,8 @@ public class BomResource extends AbstractApiResource {
                                 }
                                 requireAccess(qm, parent, "Access to the specified parent project is forbidden");
                             }
-                            createNewProject(projectName, projectVersion, tags, parent, isLatest, null);
+                            // List of tags was removed, so just pass an empty ArrayList until we restored them
+                            createNewProject(projectName, projectVersion, new ArrayList<>(), parent, isLatest);
                             new JdoNotificationEmitter(qm).emit(
                                     createProjectCreatedNotification(
                                             NotificationModelConverter.convert(project)));
