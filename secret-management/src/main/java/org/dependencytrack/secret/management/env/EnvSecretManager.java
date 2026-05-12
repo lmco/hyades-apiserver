@@ -84,6 +84,11 @@ final class EnvSecretManager implements SecretManager {
         return secretValueByName.get(name);
     }
 
+    @Override
+    public @Nullable String getEncryptedValue(String name) {
+        throw new UnsupportedOperationException();
+    }
+
     record ListSecretsPageToken(String lastName) implements PageToken {
     }
 

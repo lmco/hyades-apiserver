@@ -96,7 +96,7 @@ public class EventSubsystemInitializer implements ServletContextListener {
         requireNonNull(secretManager, "secretManager has not been initialized");
 
         eventService.subscribe(LdapSyncEvent.class, new LdapSyncTaskWrapper());
-        eventService.subscribe(GitLabIntegrationStateEvent.class, new GitLabIntegrationStateTask());
+        eventService.subscribe(GitLabIntegrationStateEvent.class, new GitLabIntegrationStateTask(secretManager));
         eventService.subscribe(GitLabSyncEvent.class, new GitLabSyncTask());
         eventService.subscribe(
                 PortfolioVulnerabilityAnalysisEvent.class,

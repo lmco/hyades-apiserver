@@ -84,6 +84,12 @@ public interface SecretManager extends Closeable {
 
     /**
      * @param name Name of the secret.
+     * @return The encrypted text value of the secret.
+     */
+    @Nullable String getEncryptedValue(String name);
+
+    /**
+     * @param name Name of the secret.
      * @return Secret metadata.
      */
     @Nullable SecretMetadata getSecretMetadata(String name);

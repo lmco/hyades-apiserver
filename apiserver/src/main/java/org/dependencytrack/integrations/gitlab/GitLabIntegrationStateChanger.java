@@ -28,7 +28,7 @@ import org.dependencytrack.auth.Permissions;
 import org.dependencytrack.integrations.AbstractIntegrationPoint;
 import org.dependencytrack.model.ConfigPropertyConstants;
 import org.dependencytrack.persistence.QueryManager;
-import org.dependencytrack.secret.management.database.DatabaseSecretManager;
+import org.dependencytrack.secret.management.SecretManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,10 +42,10 @@ public class GitLabIntegrationStateChanger extends AbstractIntegrationPoint {
     private static final Logger LOGGER = LoggerFactory.getLogger(GitLabIntegrationStateChanger.class);
     private static final String DEFAULT_TEAM = "GitLab Users";
     private final Map<String, Permission> PERMISSIONS_MAP = new HashMap<>();
-    private final DatabaseSecretManager secretManager;
+    private final SecretManager secretManager;
 
-    public GitLabIntegrationStateChanger(DatabaseSecretManager secretManager) {
-        this.secretManager = requireNonNull(secretManager, "secretManager must not be null");
+    public GitLabIntegrationStateChanger(SecretManager secretManager) {
+        this.secretManager = Objects.requireNonNull(secretManager, "secretManager must not be null");
     }
 
     @Override

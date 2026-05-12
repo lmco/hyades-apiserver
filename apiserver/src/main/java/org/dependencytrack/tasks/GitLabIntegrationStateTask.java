@@ -26,6 +26,7 @@ import alpine.model.ConfigProperty;
 
 import org.dependencytrack.integrations.gitlab.GitLabIntegrationStateChanger;
 import org.dependencytrack.persistence.QueryManager;
+import org.dependencytrack.secret.management.SecretManager;
 
 import static org.dependencytrack.model.ConfigPropertyConstants.GITLAB_ENABLED;
 
@@ -35,12 +36,14 @@ public class GitLabIntegrationStateTask implements LoggableSubscriber {
 
     private static final Logger LOGGER = LoggerFactory.getLogger(GitLabIntegrationStateTask.class);
     private final boolean isEnabled;
+    private final SecretManager secretManager;
 
-    public GitLabIntegrationStateTask() {
+    public GitLabIntegrationStateTask(SecretManager secretManager) {
         try (final QueryManager qm = new QueryManager()) {
             final ConfigProperty enabled = qm.getConfigProperty(GITLAB_ENABLED.getGroupName(), GITLAB_ENABLED.getPropertyName());
 
             this.isEnabled = enabled != null && Boolean.parseBoolean(enabled.getPropertyValue());
+            this.secretManager = secretManager;
         }
     }
 
@@ -56,7 +59,7 @@ public class GitLabIntegrationStateTask implements LoggableSubscriber {
         LOGGER.info("Starting GitLab state change task");
 
         try (QueryManager qm = new QueryManager()) {
-            GitLabIntegrationStateChanger stateChanger = new GitLabIntegrationStateChanger();
+            GitLabIntegrationStateChanger stateChanger = new GitLabIntegrationStateChanger(secretManager);
             stateChanger.setQueryManager(qm);
             stateChanger.setState(this.isEnabled);
         }
