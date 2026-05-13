@@ -376,7 +376,7 @@ class WebhookNotificationPublisherTest extends AbstractNotificationPublisherTest
 
         assertThatExceptionOfType(RetryablePublishException.class)
                 .isThrownBy(() -> publisher.publish(publishContext, createBomConsumedTestNotification()))
-                .satisfies(exception -> Assertions.assertThat(exception.getRetryAfter())).isNull();
+                .satisfies(exception -> Assertions.assertThat(exception.getRetryAfter()).isNull());
     }
 
     @ParameterizedTest
