@@ -30,7 +30,7 @@ public class AboutTest {
     @Test
     public void getterTest() {
         About about = new About();
-        Assertions.assertEquals("Unknown Alpine Application", about.getApplication());
+        Assertions.assertEquals("Dependency-Track", about.getApplication());
         Assertions.assertEquals("0.0.0", about.getVersion());
         Assertions.assertEquals("1970-01-01 00:00:00", about.getTimestamp());
         Assertions.assertEquals("00000000-0000-0000-0000-000000000000", about.getUuid());
