@@ -109,10 +109,10 @@ class UserResourceAuthenticatedTest extends ResourceTest {
             responseManaged.getStatus(), responseOidc.getStatus()
             );
         List<Integer> expectedStatuses = List.of(200, 200, 200, 200);
-        Assert.assertEquals(expectedStatuses, statuses);
+        Assertions.assertThat(expectedStatuses).isEqualTo(statuses);
 
         JsonArray users = parseJsonArray(responseAll);
-        Assert.assertTrue(users.toArray().length >= 3);
+        Assertions.assertThat(users.toArray().length >= 3).isTrue();
     }
 
     @Test
@@ -734,7 +734,7 @@ class UserResourceAuthenticatedTest extends ResourceTest {
         Assertions.assertNull(response.getHeaderString(TOTAL_COUNT_HEADER));
         String body = getPlainTextBody(response);
         // TODO: Possible bug in Jersey? The response entity is set in the resource, but blank in the actual response.
-        //Assert.assertEquals("The user is already a member of the specified team.", body);
+        //Assertions.assertThat("The user is already a member of the specified team.").isEqualTo(body);
     }
 
     @Test

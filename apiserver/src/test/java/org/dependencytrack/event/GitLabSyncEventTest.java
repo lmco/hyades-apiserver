@@ -92,7 +92,7 @@ public class GitLabSyncEventTest {
 
         // Assert
         Assertions.assertThat(toString).isNotNull();
-        Assertions.assertThat(toString.contains("GitLabSyncEvent").isTrue());
-        Assertions.assertThat(toString.contains("null").isTrue());
+        Assertions.assertThat(toString.contains("GitLabSyncEvent")).isTrue();
+        Assertions.assertThat(toString.contains("null")).isTrue();
     }
 }

@@ -27,6 +27,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.stubFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 
 import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
+import com.github.tomakehurst.wiremock.junit5.WireMockExtension;
 import com.github.tomakehurst.wiremock.stubbing.Scenario;
 
 import static org.mockito.ArgumentMatchers.eq;
@@ -99,7 +100,7 @@ public class GitLabClientTest {
 
         final var configMock = mock(Config.class);
 
-        when(configMock.getConfigValue(eq(ConfigKeys.OIDC_ISSUER))).thenReturn(wireMockRule.baseUrl());
+        when(configMock.getConfigValue(eq(ConfigKeys.OIDC_ISSUER))).thenReturn(wireMock.baseUrl());
 
         GitLabClient gitLabClient = new GitLabClient(accessToken, configMock, null, false);
 
@@ -134,7 +135,7 @@ public class GitLabClientTest {
 
         final var configMock = mock(Config.class);
 
-        when(configMock.getConfigValue(eq(ConfigKeys.OIDC_ISSUER))).thenReturn(wireMockRule.baseUrl());
+        when(configMock.getConfigValue(eq(ConfigKeys.OIDC_ISSUER))).thenReturn(wireMock.baseUrl());
         List<String> topics = Arrays.asList("topic1");
 
         GitLabClient gitLabClient = new GitLabClient(accessToken, configMock, topics, false);

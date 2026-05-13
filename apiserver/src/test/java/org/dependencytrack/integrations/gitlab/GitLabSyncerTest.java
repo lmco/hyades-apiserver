@@ -76,7 +76,7 @@ public class GitLabSyncerTest extends PersistenceCapableTest {
                 null);
         GitLabSyncer extension = new GitLabSyncer(user, gitLabClient);
         extension.setQueryManager(qm);
-        Assertions.assertThat(extension.isEnabled().isTrue());
+        Assertions.assertThat(extension.isEnabled()).isTrue();
     }
 
     /**
@@ -93,7 +93,7 @@ public class GitLabSyncerTest extends PersistenceCapableTest {
                 null);
         GitLabSyncer extension = new GitLabSyncer(user, gitLabClient);
         extension.setQueryManager(qm);
-        Assertions.assertThat(extension.isEnabled().isFalse());
+        Assertions.assertThat(extension.isEnabled()).isFalse();
     }
 
     /**
@@ -124,9 +124,9 @@ public class GitLabSyncerTest extends PersistenceCapableTest {
         }
 
         Project testProject1 = qm.getProject("this/test/project1", null);
-        Assertions.assertThat(testProject1.isActive().isFalse());
+        Assertions.assertThat(testProject1.isActive()).isFalse();
 
         Project testProject2 = qm.getProject("that/test/project2", null);
-        Assertions.assertThat(testProject2.isActive().isFalse());
+        Assertions.assertThat(testProject2.isActive()).isFalse();
     }
 }

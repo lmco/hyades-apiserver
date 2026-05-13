@@ -33,14 +33,14 @@ public class PermissionsSyncerTest {
     public final void testIsEnabled_True() {
         PermissionsSyncer permissionsSyncer = mock(PermissionsSyncer.class);
         when(permissionsSyncer.isEnabled()).thenReturn(true);
-        Assertions.assertThat(permissionsSyncer.isEnabled().isTrue());
+        Assertions.assertThat(permissionsSyncer.isEnabled()).isTrue();
     }
 
     @Test
     public final void testIsEnabled_False() {
         PermissionsSyncer permissionsSyncer = mock(PermissionsSyncer.class);
         when(permissionsSyncer.isEnabled()).thenReturn(false);
-        Assertions.assertThat(permissionsSyncer.isEnabled().isFalse());
+        Assertions.assertThat(permissionsSyncer.isEnabled()).isFalse();
     }
 
     @Test
