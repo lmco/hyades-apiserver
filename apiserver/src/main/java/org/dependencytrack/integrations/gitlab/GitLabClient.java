@@ -19,8 +19,13 @@
 
 package org.dependencytrack.integrations.gitlab;
 
+import org.dependencytrack.common.HttpClient;
+
+import java.io.InputStream;
 import java.io.IOException;
 import java.math.BigInteger;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
@@ -44,7 +49,6 @@ import org.apache.http.client.utils.URIBuilder;
 import org.apache.http.entity.StringEntity;
 import org.apache.http.util.EntityUtils;
 import org.dependencytrack.common.ConfigKeys;
-import org.dependencytrack.common.HttpClientPool;
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.config.ConfigProvider;
 import org.slf4j.Logger;
@@ -53,6 +57,7 @@ import org.slf4j.LoggerFactory;
 import net.minidev.json.JSONArray;
 import net.minidev.json.JSONObject;
 import net.minidev.json.JSONValue;
+import net.minidev.json.parser.JSONParser;
 
 public class GitLabClient {
 
@@ -107,30 +112,27 @@ public class GitLabClient {
 
         URIBuilder builder = new URIBuilder(baseURL.toString()).setPath(GRAPHQL_ENDPOINT);
 
-        HttpPost request = new HttpPost(builder.build());
-        request.setHeader("Authorization", "Bearer " + accessToken);
-        request.setHeader("Content-Type", "application/json");
+        final var requestBuilder = HttpRequest.newBuilder()
+                .uri(builder.build())
+                .header("Authorization", "Bearer " + accessToken)
+                .header("Content-Type", "application/json");
 
         while (true) {
             queryObject.put("variables", variables);
 
             StringEntity entity = new StringEntity(queryObject.toString(), StandardCharsets.UTF_8);
-            request.setEntity(entity);
+            requestBuilder.POST(HttpRequest.BodyPublishers.ofString(entity.toString()));
 
-            try (CloseableHttpResponse response = HttpClientPool.getClient().execute(request)) {
-                int statusCode = response.getStatusLine().getStatusCode();
+            try {
+                HttpResponse<InputStream> response = HttpClient.INSTANCE.send(requestBuilder.build(), HttpResponse.BodyHandlers.ofInputStream());
+                int statusCode = response.statusCode();
                 if (statusCode < 200 || statusCode >= 300) {
                     LOGGER.warn("GitLab GraphQL query failed with status code: " + statusCode);
                     break;
                 }
 
-                HttpEntity responseEntity = response.getEntity();
-
-                if (responseEntity == null)
-                    break;
-
-                String responseBody = EntityUtils.toString(responseEntity);
-                JSONObject responseData = JSONValue.parse(responseBody, JSONObject.class);
+                JSONParser parser = new JSONParser(JSONParser.MODE_PERMISSIVE);
+                JSONObject responseData = parser.parse(response.body(), JSONObject.class);
 
                 // Check for GraphQL errors
                 if (responseData.containsKey("errors")) {
@@ -154,61 +156,14 @@ public class GitLabClient {
                     break;
 
                 variables.put("cursor", pageInfo.getAsString("endCursor"));
+            } catch(Exception e) {
+                System.out.println(e);
             }
         }
 
         return projects;
     }
 
-    private static JSONObject getJwks(String jwksUrl) throws IOException, InterruptedException, URISyntaxException {
-        URIBuilder builder = new URIBuilder(jwksUrl);
-        HttpGet request = new HttpGet(builder.build());
-        request.setHeader("Accept", "application/json");
-
-        try (CloseableHttpResponse response = HttpClientPool.getClient().execute(request)) {
-            String jsonResponse = EntityUtils.toString(response.getEntity());
-            if (response.getStatusLine().getStatusCode() != HttpStatus.SC_OK)
-                throw new IOException("Failed to fetch JWKS from URL: %s. Status code: %d".formatted(jwksUrl, response.getStatusLine().getStatusCode()));
-
-            if (!jsonResponse.trim().startsWith("{"))
-                throw new IOException("Unexpected response: " + response.getEntity());
-
-            return JSONValue.parse(jsonResponse, JSONObject.class);
-        }
-    }
-
-    public static PublicKey getPublicKeyFromJwks(String baseUrl, String jwksPath, String kid) throws Exception {
-        String gitLabJwksUrl = baseUrl + jwksPath;
-        Object keysObject = getJwks(gitLabJwksUrl).getOrDefault("keys", new JSONArray());
-        if (!(keysObject instanceof List))
-            throw new IllegalArgumentException("Invalid JWKS format: 'keys' is not a list");
-
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> keys = (List<Map<String, Object>>) keysObject;
-        for (Map<String, Object> keyMap : keys) {
-            JSONObject jsonKey = new JSONObject();
-            jsonKey.put("kty", keyMap.get("kty"));
-            jsonKey.put("alg", keyMap.get("alg"));
-            jsonKey.put("use", keyMap.get("use"));
-            jsonKey.put("kid", keyMap.get("kid"));
-            jsonKey.put("n", keyMap.get("n"));
-            jsonKey.put("e", keyMap.get("e"));
-
-            if (jsonKey.get("kid").equals(kid)) {
-                if (!jsonKey.containsKey("n") || !jsonKey.containsKey("e"))
-                    throw new IllegalArgumentException("Missing modulus 'n' or exponent 'e' in JWKS key: " + jsonKey);
-
-                RSAPublicKeySpec spec = new RSAPublicKeySpec(
-                    new BigInteger(1, Base64.getUrlDecoder().decode(jsonKey.get("n").toString())),
-                    new BigInteger(1, Base64.getUrlDecoder().decode(jsonKey.get("e").toString()))
-                    );
-
-                return KeyFactory.getInstance("RSA").generatePublic(spec);
-            }
-        }
-
-        throw new IllegalArgumentException("Public key not found for kid: " + kid);
-    }
 
     // JSONArray to ArrayList simple converter
     public ArrayList<String> jsonToList(final JSONArray jsonArray) {
