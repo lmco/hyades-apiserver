@@ -31,8 +31,8 @@ public class GitLabSyncEventTest {
         GitLabSyncEvent event = new GitLabSyncEvent();
 
         // Assert
-        Assertions.assertThat(event.getAccessToken().isNull());
-        Assertions.assertThat(event.getUser().isNull());
+        Assertions.assertThat(event.getAccessToken()).isNull();
+        Assertions.assertThat(event.getUser()).isNull();
     }
 
     @Test
@@ -45,8 +45,8 @@ public class GitLabSyncEventTest {
         GitLabSyncEvent event = new GitLabSyncEvent(accessToken, user);
 
         // Assert
-        Assertions.assertThat(accessToken.isEqualTo(event.getAccessToken()));
-        Assertions.assertThat(user.isEqualTo(event.getUser()));
+        Assertions.assertThat(accessToken).isEqualTo(event.getAccessToken());
+        Assertions.assertThat(user).isEqualTo(event.getUser());
     }
 
     @Test
@@ -61,8 +61,8 @@ public class GitLabSyncEventTest {
         event.setUser(user);
 
         // Assert
-        Assertions.assertThat(accessToken.isEqualTo(event.getAccessToken()));
-        Assertions.assertThat(user.isEqualTo(event.getUser()));
+        Assertions.assertThat(accessToken).isEqualTo(event.getAccessToken());
+        Assertions.assertThat(user).isEqualTo(event.getUser());
     }
 
     @Test
@@ -76,10 +76,10 @@ public class GitLabSyncEventTest {
         String toString = event.toString();
 
         // Assert
-        Assertions.assertThat(toString.isNotNull());
-        Assertions.assertThat(toString.contains("GitLabSyncEvent").isTrue());
-        Assertions.assertThat(toString.contains(accessToken).isTrue());
-        Assertions.assertThat(toString.contains(user.toString()).isTrue());
+        Assertions.assertThat(toString).isNotNull();
+        Assertions.assertThat(toString.contains("GitLabSyncEvent")).isTrue();
+        Assertions.assertThat(toString.contains(accessToken)).isTrue();
+        Assertions.assertThat(toString.contains(user.toString())).isTrue();
     }
 
     @Test
@@ -91,7 +91,7 @@ public class GitLabSyncEventTest {
         String toString = event.toString();
 
         // Assert
-        Assertions.assertThat(toString.isNotNull());
+        Assertions.assertThat(toString).isNotNull();
         Assertions.assertThat(toString.contains("GitLabSyncEvent").isTrue());
         Assertions.assertThat(toString.contains("null").isTrue());
     }

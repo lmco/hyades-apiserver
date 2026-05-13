@@ -54,8 +54,8 @@ public class GitLabIntegrationStateChangerTest extends PersistenceCapableTest {
      */
     @Test
     public void testIntegrationStateChangerMetadata() {
-        Assertions.assertThat("GitLab Integration State Changer".isEqualTo(stateChanger.name()));
-        Assertions.assertThat("Executes GitLab integration enable and disable tasks".isEqualTo(stateChanger.description()));
+        Assertions.assertThat("GitLab Integration State Changer").isEqualTo(stateChanger.name());
+        Assertions.assertThat("Executes GitLab integration enable and disable tasks").isEqualTo(stateChanger.description());
     }
 
     /**

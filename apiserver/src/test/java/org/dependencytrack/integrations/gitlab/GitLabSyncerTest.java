@@ -26,7 +26,6 @@ import org.dependencytrack.PersistenceCapableTest;
 import org.dependencytrack.model.Project;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
-import org.junit.runner.RunWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.MockitoJUnitRunner;
@@ -42,7 +41,6 @@ import static org.dependencytrack.model.ConfigPropertyConstants.GITLAB_ENABLED;
 /**
  * This test suite validates the integration with the GitLab API.
  */
-@RunWith(MockitoJUnitRunner.class)
 public class GitLabSyncerTest extends PersistenceCapableTest {
 
     @Mock
@@ -60,8 +58,8 @@ public class GitLabSyncerTest extends PersistenceCapableTest {
     @Test
     public void testIntegrationMetadata() {
         GitLabSyncer extension = new GitLabSyncer(user, gitLabClient);
-        Assertions.assertThat("GitLab".isEqualTo(extension.name()));
-        Assertions.assertThat("Synchronizes user permissions from connected GitLab instance".isEqualTo(extension.description()));
+        Assertions.assertThat("GitLab").isEqualTo(extension.name());
+        Assertions.assertThat("Synchronizes user permissions from connected GitLab instance").isEqualTo(extension.description());
     }
 
     /**

@@ -26,7 +26,7 @@ import static com.github.tomakehurst.wiremock.client.WireMock.post;
 import static com.github.tomakehurst.wiremock.client.WireMock.stubFor;
 import static com.github.tomakehurst.wiremock.client.WireMock.urlPathEqualTo;
 
-import com.github.tomakehurst.wiremock.junit.WireMockRule;
+import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.wireMockConfig;
 import com.github.tomakehurst.wiremock.stubbing.Scenario;
 
 import static org.mockito.ArgumentMatchers.eq;
@@ -42,31 +42,27 @@ import java.util.List;
 
 import org.apache.http.HttpHeaders;
 import org.dependencytrack.common.ConfigKeys;
-import org.dependencytrack.event.kafka.KafkaProducerInitializer;
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.config.ConfigProvider;
 import org.junit.jupiter.api.AfterAll;
-import org.junit.Rule;
+import org.junit.jupiter.api.extension.RegisterExtension;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
 
-import static org.testcontainers.shaded.org.apache.commons.io.IOUtils.resourceToString;
+import static org.apache.commons.io.IOUtils.resourceToString;
 
 public class GitLabClientTest {
 
-    @Rule
-    public WireMockRule wireMockRule = new WireMockRule();
-
-    @AfterAll
-    public static void afterAll() {
-        KafkaProducerInitializer.tearDown();
-    }
+    @RegisterExtension
+    static final WireMockExtension wireMock = WireMockExtension.newInstance()
+            .options(wireMockConfig().dynamicPort())
+            .build();
 
     @Test
     public void testConstructorWithAccessToken() {
         String accessToken = "my-access-token";
         GitLabClient client = new GitLabClient(accessToken);
-        Assertions.assertThat(client.isNotNull());
+        Assertions.assertThat(client).isNotNull();
     }
 
     @Test
@@ -74,8 +70,8 @@ public class GitLabClientTest {
         String accessToken = "my-access-token";
         Config config = ConfigProvider.getConfig();
         GitLabClient client = new GitLabClient(accessToken, config, null, false);
-        Assertions.assertThat(client.isNotNull());
-        Assertions.assertThat("Dependency-Track".isEqualTo(client.getConfig().getConfigValue(ConfigKeys.APPLICATION_NAME)));
+        Assertions.assertThat(client).isNotNull();
+        Assertions.assertThat("Dependency-Track").isEqualTo(client.getConfig().getConfigValue(ConfigKeys.APPLICATION_NAME));
     }
 
     @Test
@@ -109,7 +105,7 @@ public class GitLabClientTest {
 
         List<GitLabProject> gitLabProjects = gitLabClient.getGitLabProjects();
 
-        Assertions.assertThat(gitLabProjects.isNotNull());
+        Assertions.assertThat(gitLabProjects).isNotNull();
         Assertions.assertThat(gitLabProjects.size().isEqualTo(4));
 
         List<String> actualProjectPaths = new ArrayList<>();
@@ -122,7 +118,7 @@ public class GitLabClientTest {
                 "test-group/test-subgroup-2/test-project-3",
                 "test-group/test-subgroup-2/test-project-4");
 
-        Assertions.assertThat(actualProjectPaths.isEqualTo(expectedProjectPaths));
+        Assertions.assertThat(actualProjectPaths).isEqualTo(expectedProjectPaths);
     }
 
     @Test
@@ -145,10 +141,10 @@ public class GitLabClientTest {
 
         List<GitLabProject> gitLabProjects = gitLabClient.getGitLabProjects();
 
-        Assertions.assertThat(gitLabProjects.isNotNull());
+        Assertions.assertThat(gitLabProjects).isNotNull();
         Assertions.assertThat(gitLabProjects.size().isEqualTo(1));
 
-        Assertions.assertThat("project/with/topic".isEqualTo(gitLabProjects.get(0).getFullPath()));
+        Assertions.assertThat("project/with/topic").isEqualTo(gitLabProjects.get(0).getFullPath());
     }
 
     @Test
@@ -159,10 +155,10 @@ public class GitLabClientTest {
         jsonArray.add("item1");
         jsonArray.add("item2");
         List<String> list = client.jsonToList(jsonArray);
-        Assertions.assertThat(list.isNotNull());
-        Assertions.assertThat(list.size().isEqualTo(2)); // assume 2 items are returned
-        Assertions.assertThat("item1".isEqualTo(list.get(0)));
-        Assertions.assertThat("item2".isEqualTo(list.get(1)));
+        Assertions.assertThat(list).isNotNull();
+        Assertions.assertThat(list.size()).isEqualTo(2); // assume 2 items are returned
+        Assertions.assertThat("item1").isEqualTo(list.get(0));
+        Assertions.assertThat("item2").isEqualTo(list.get(1));
     }
 
 }

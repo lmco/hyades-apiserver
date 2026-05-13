@@ -42,7 +42,7 @@ public class GitLabAuthenticationCustomizerTest {
 
         boolean result = customizer.isProfileComplete(profile, teamSyncEnabled);
 
-        Assertions.assertThat(result.isTrue());
+        Assertions.assertThat(result).isTrue();
     }
 
     @Test
@@ -57,7 +57,7 @@ public class GitLabAuthenticationCustomizerTest {
 
         OidcUser result = customizer.onAuthenticationSuccess(user, profile, idToken, accessToken);
 
-        Assertions.assertThat(user.isEqualTo(result));
+        Assertions.assertThat(user).isEqualTo(result);
 
         // Verify that the GitLabSyncEvent was dispatched
         verify(Event.class, Mockito.times(1));
@@ -78,7 +78,7 @@ public class GitLabAuthenticationCustomizerTest {
 
         OidcUser result = customizer.onAuthenticationSuccess(user, profile, idToken, accessToken);
 
-        Assertions.assertThat(user.isEqualTo(result));
+        Assertions.assertThat(user).isEqualTo(result);
 
         // Verify that the GitLabSyncEvent was dispatched
         verify(Event.class, Mockito.times(1));
@@ -96,7 +96,7 @@ public class GitLabAuthenticationCustomizerTest {
 
         OidcUser result = customizer.onAuthenticationSuccess(user, profile, idToken, accessToken);
 
-        Assertions.assertThat(user.isEqualTo(result));
+        Assertions.assertThat(user).isEqualTo(result);
 
         // Verify that the GitLabSyncEvent was dispatched
         verify(Event.class, Mockito.times(1));
