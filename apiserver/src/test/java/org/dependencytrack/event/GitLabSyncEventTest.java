@@ -20,8 +20,8 @@
 package org.dependencytrack.event;
 
 import alpine.model.OidcUser;
-import org.junit.Assert;
-import org.junit.Test;
+import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.Test;
 
 public class GitLabSyncEventTest {
 
@@ -31,8 +31,8 @@ public class GitLabSyncEventTest {
         GitLabSyncEvent event = new GitLabSyncEvent();
 
         // Assert
-        Assert.assertNull(event.getAccessToken());
-        Assert.assertNull(event.getUser());
+        Assertions.assertThat(event.getAccessToken().isNull());
+        Assertions.assertThat(event.getUser().isNull());
     }
 
     @Test
@@ -45,8 +45,8 @@ public class GitLabSyncEventTest {
         GitLabSyncEvent event = new GitLabSyncEvent(accessToken, user);
 
         // Assert
-        Assert.assertEquals(accessToken, event.getAccessToken());
-        Assert.assertEquals(user, event.getUser());
+        Assertions.assertThat(accessToken.isEqualTo(event.getAccessToken()));
+        Assertions.assertThat(user.isEqualTo(event.getUser()));
     }
 
     @Test
@@ -61,8 +61,8 @@ public class GitLabSyncEventTest {
         event.setUser(user);
 
         // Assert
-        Assert.assertEquals(accessToken, event.getAccessToken());
-        Assert.assertEquals(user, event.getUser());
+        Assertions.assertThat(accessToken.isEqualTo(event.getAccessToken()));
+        Assertions.assertThat(user.isEqualTo(event.getUser()));
     }
 
     @Test
@@ -76,10 +76,10 @@ public class GitLabSyncEventTest {
         String toString = event.toString();
 
         // Assert
-        Assert.assertNotNull(toString);
-        Assert.assertTrue(toString.contains("GitLabSyncEvent"));
-        Assert.assertTrue(toString.contains(accessToken));
-        Assert.assertTrue(toString.contains(user.toString()));
+        Assertions.assertThat(toString.isNotNull());
+        Assertions.assertThat(toString.contains("GitLabSyncEvent").isTrue());
+        Assertions.assertThat(toString.contains(accessToken).isTrue());
+        Assertions.assertThat(toString.contains(user.toString()).isTrue());
     }
 
     @Test
@@ -91,8 +91,8 @@ public class GitLabSyncEventTest {
         String toString = event.toString();
 
         // Assert
-        Assert.assertNotNull(toString);
-        Assert.assertTrue(toString.contains("GitLabSyncEvent"));
-        Assert.assertTrue(toString.contains("null"));
+        Assertions.assertThat(toString.isNotNull());
+        Assertions.assertThat(toString.contains("GitLabSyncEvent").isTrue());
+        Assertions.assertThat(toString.contains("null").isTrue());
     }
 }

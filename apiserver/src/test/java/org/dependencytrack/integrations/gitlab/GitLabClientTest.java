@@ -45,11 +45,10 @@ import org.dependencytrack.common.ConfigKeys;
 import org.dependencytrack.event.kafka.KafkaProducerInitializer;
 import org.eclipse.microprofile.config.Config;
 import org.eclipse.microprofile.config.ConfigProvider;
-import org.junit.AfterClass;
-import org.junit.Assert;
-import org.junit.BeforeClass;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.Rule;
-import org.junit.Test;
+import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.Test;
 
 import static org.testcontainers.shaded.org.apache.commons.io.IOUtils.resourceToString;
 
@@ -58,8 +57,8 @@ public class GitLabClientTest {
     @Rule
     public WireMockRule wireMockRule = new WireMockRule();
 
-    @AfterClass
-    public static void after() {
+    @AfterAll
+    public static void afterAll() {
         KafkaProducerInitializer.tearDown();
     }
 
@@ -67,7 +66,7 @@ public class GitLabClientTest {
     public void testConstructorWithAccessToken() {
         String accessToken = "my-access-token";
         GitLabClient client = new GitLabClient(accessToken);
-        Assert.assertNotNull(client);
+        Assertions.assertThat(client.isNotNull());
     }
 
     @Test
@@ -75,8 +74,8 @@ public class GitLabClientTest {
         String accessToken = "my-access-token";
         Config config = ConfigProvider.getConfig();
         GitLabClient client = new GitLabClient(accessToken, config, null, false);
-        Assert.assertNotNull(client);
-        Assert.assertEquals("Dependency-Track", client.getConfig().getConfigValue(ConfigKeys.APPLICATION_NAME));
+        Assertions.assertThat(client.isNotNull());
+        Assertions.assertThat("Dependency-Track".isEqualTo(client.getConfig().getConfigValue(ConfigKeys.APPLICATION_NAME)));
     }
 
     @Test
@@ -110,8 +109,8 @@ public class GitLabClientTest {
 
         List<GitLabProject> gitLabProjects = gitLabClient.getGitLabProjects();
 
-        Assert.assertNotNull(gitLabProjects);
-        Assert.assertEquals(4, gitLabProjects.size());
+        Assertions.assertThat(gitLabProjects.isNotNull());
+        Assertions.assertThat(gitLabProjects.size().isEqualTo(4));
 
         List<String> actualProjectPaths = new ArrayList<>();
         for (var project : gitLabProjects)
@@ -123,7 +122,7 @@ public class GitLabClientTest {
                 "test-group/test-subgroup-2/test-project-3",
                 "test-group/test-subgroup-2/test-project-4");
 
-        Assert.assertEquals(actualProjectPaths, expectedProjectPaths);
+        Assertions.assertThat(actualProjectPaths.isEqualTo(expectedProjectPaths));
     }
 
     @Test
@@ -146,10 +145,10 @@ public class GitLabClientTest {
 
         List<GitLabProject> gitLabProjects = gitLabClient.getGitLabProjects();
 
-        Assert.assertNotNull(gitLabProjects);
-        Assert.assertEquals(1, gitLabProjects.size());
+        Assertions.assertThat(gitLabProjects.isNotNull());
+        Assertions.assertThat(gitLabProjects.size().isEqualTo(1));
 
-        Assert.assertEquals("project/with/topic", gitLabProjects.get(0).getFullPath());
+        Assertions.assertThat("project/with/topic".isEqualTo(gitLabProjects.get(0).getFullPath()));
     }
 
     @Test
@@ -160,10 +159,10 @@ public class GitLabClientTest {
         jsonArray.add("item1");
         jsonArray.add("item2");
         List<String> list = client.jsonToList(jsonArray);
-        Assert.assertNotNull(list);
-        Assert.assertEquals(2, list.size()); // assume 2 items are returned
-        Assert.assertEquals("item1", list.get(0));
-        Assert.assertEquals("item2", list.get(1));
+        Assertions.assertThat(list.isNotNull());
+        Assertions.assertThat(list.size().isEqualTo(2)); // assume 2 items are returned
+        Assertions.assertThat("item1".isEqualTo(list.get(0)));
+        Assertions.assertThat("item2".isEqualTo(list.get(1)));
     }
 
 }

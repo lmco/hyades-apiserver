@@ -18,14 +18,14 @@
  */
 package org.dependencytrack.integrations.gitlab;
 
-import org.junit.Assert;
 import alpine.model.IConfigProperty;
 import alpine.model.OidcUser;
 import java.net.URISyntaxException;
 import java.io.IOException;
 import org.dependencytrack.PersistenceCapableTest;
 import org.dependencytrack.model.Project;
-import org.junit.Test;
+import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.Test;
 import org.junit.runner.RunWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -60,8 +60,8 @@ public class GitLabSyncerTest extends PersistenceCapableTest {
     @Test
     public void testIntegrationMetadata() {
         GitLabSyncer extension = new GitLabSyncer(user, gitLabClient);
-        Assert.assertEquals("GitLab", extension.name());
-        Assert.assertEquals("Synchronizes user permissions from connected GitLab instance", extension.description());
+        Assertions.assertThat("GitLab".isEqualTo(extension.name()));
+        Assertions.assertThat("Synchronizes user permissions from connected GitLab instance".isEqualTo(extension.description()));
     }
 
     /**
@@ -78,7 +78,7 @@ public class GitLabSyncerTest extends PersistenceCapableTest {
                 null);
         GitLabSyncer extension = new GitLabSyncer(user, gitLabClient);
         extension.setQueryManager(qm);
-        Assert.assertTrue(extension.isEnabled());
+        Assertions.assertThat(extension.isEnabled().isTrue());
     }
 
     /**
@@ -95,7 +95,7 @@ public class GitLabSyncerTest extends PersistenceCapableTest {
                 null);
         GitLabSyncer extension = new GitLabSyncer(user, gitLabClient);
         extension.setQueryManager(qm);
-        Assert.assertFalse(extension.isEnabled());
+        Assertions.assertThat(extension.isEnabled().isFalse());
     }
 
     /**
@@ -122,13 +122,13 @@ public class GitLabSyncerTest extends PersistenceCapableTest {
                             new GitLabProject("that/test/project2", "GitLab Project Reporter")));
             extension.synchronize();
         } catch (IOException | URISyntaxException ex) {
-            Assert.fail("Exception " + ex);
+            Assertions.fail("Exception " + ex);
         }
 
         Project testProject1 = qm.getProject("this/test/project1", null);
-        Assert.assertFalse(testProject1.isActive());
+        Assertions.assertThat(testProject1.isActive().isFalse());
 
         Project testProject2 = qm.getProject("that/test/project2", null);
-        Assert.assertFalse(testProject2.isActive());
+        Assertions.assertThat(testProject2.isActive().isFalse());
     }
 }

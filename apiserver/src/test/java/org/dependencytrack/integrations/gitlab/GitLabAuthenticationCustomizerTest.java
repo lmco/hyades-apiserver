@@ -21,8 +21,8 @@ package org.dependencytrack.integrations.gitlab;
 import alpine.event.framework.Event;
 import alpine.model.OidcUser;
 import alpine.server.auth.OidcProfile;
-import org.junit.Assert;
-import org.junit.Test;
+import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import java.util.ArrayList;
@@ -42,7 +42,7 @@ public class GitLabAuthenticationCustomizerTest {
 
         boolean result = customizer.isProfileComplete(profile, teamSyncEnabled);
 
-        Assert.assertTrue(result);
+        Assertions.assertThat(result.isTrue());
     }
 
     @Test
@@ -57,7 +57,7 @@ public class GitLabAuthenticationCustomizerTest {
 
         OidcUser result = customizer.onAuthenticationSuccess(user, profile, idToken, accessToken);
 
-        Assert.assertEquals(user, result);
+        Assertions.assertThat(user.isEqualTo(result));
 
         // Verify that the GitLabSyncEvent was dispatched
         verify(Event.class, Mockito.times(1));
@@ -78,7 +78,7 @@ public class GitLabAuthenticationCustomizerTest {
 
         OidcUser result = customizer.onAuthenticationSuccess(user, profile, idToken, accessToken);
 
-        Assert.assertEquals(user, result);
+        Assertions.assertThat(user.isEqualTo(result));
 
         // Verify that the GitLabSyncEvent was dispatched
         verify(Event.class, Mockito.times(1));
@@ -96,7 +96,7 @@ public class GitLabAuthenticationCustomizerTest {
 
         OidcUser result = customizer.onAuthenticationSuccess(user, profile, idToken, accessToken);
 
-        Assert.assertEquals(user, result);
+        Assertions.assertThat(user.isEqualTo(result));
 
         // Verify that the GitLabSyncEvent was dispatched
         verify(Event.class, Mockito.times(1));

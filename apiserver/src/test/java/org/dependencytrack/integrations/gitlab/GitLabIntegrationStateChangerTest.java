@@ -25,9 +25,9 @@ import alpine.model.Team;
 import org.dependencytrack.PersistenceCapableTest;
 import org.dependencytrack.auth.Permissions;
 
-import org.junit.Assert;
 import org.junit.Before;
-import org.junit.Test;
+import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
 import java.util.List;
@@ -54,8 +54,8 @@ public class GitLabIntegrationStateChangerTest extends PersistenceCapableTest {
      */
     @Test
     public void testIntegrationStateChangerMetadata() {
-        Assert.assertEquals("GitLab Integration State Changer", stateChanger.name());
-        Assert.assertEquals("Executes GitLab integration enable and disable tasks", stateChanger.description());
+        Assertions.assertThat("GitLab Integration State Changer".isEqualTo(stateChanger.name()));
+        Assertions.assertThat("Executes GitLab integration enable and disable tasks".isEqualTo(stateChanger.description()));
     }
 
     /**
@@ -91,8 +91,8 @@ public class GitLabIntegrationStateChangerTest extends PersistenceCapableTest {
         stateChanger.setState(true);
         List<Team> teamsList = qm.getTeams().getList(Team.class);
 
-        Assert.assertEquals(teamsList.size(), 1);
-        Assert.assertEquals(teamsList.get(0).getName(), "GitLab Users");
+        Assertions.assertThat(teamsList.size().isEqualTo(1));
+        Assertions.assertThat(teamsList.get(0).getName().isEqualTo("GitLab Users"));
     }
 
     /**
@@ -132,14 +132,14 @@ public class GitLabIntegrationStateChangerTest extends PersistenceCapableTest {
         // Create team to be removed
         stateChanger.setState(true);
         List<Team> teamsList = qm.getTeams().getList(Team.class);
-        Assert.assertEquals(teamsList.size(), 1);
-        Assert.assertEquals(teamsList.get(0).getName(), "GitLab Users");
+        Assertions.assertThat(teamsList.size().isEqualTo(1));
+        Assertions.assertThat(teamsList.get(0).getName().isEqualTo("GitLab Users"));
 
         // Disable the integration
         // and verify that the team is removed
         stateChanger.setState(false);
         teamsList = qm.getTeams().getList(Team.class);
-        Assert.assertEquals(0, teamsList.size());
+        Assertions.assertThat(teamsList.size().isEqualTo(0));
     }
 
     @Test
@@ -158,9 +158,9 @@ public class GitLabIntegrationStateChangerTest extends PersistenceCapableTest {
 
         // Verify that the permission was added to the map
         Map<String, Permission> permissionsMap = mockStateChanger.getPermissionsMap();
-        Assert.assertEquals(permissionsMap.size(), 1);
-        Assert.assertTrue(permissionsMap.containsKey("VIEW_PORTFOLIO"));
-        Assert.assertTrue(permissionsMap.containsValue(permission));
+        Assertions.assertThat(permissionsMap.size().isEqualTo(1));
+        Assertions.assertThat(permissionsMap.containsKey("VIEW_PORTFOLIO").isTrue());
+        Assertions.assertThat(permissionsMap.containsValue(permission).isTrue());
     }
 
     @Test
@@ -171,7 +171,7 @@ public class GitLabIntegrationStateChangerTest extends PersistenceCapableTest {
         Map<String, Permission> permissionsMap = stateChanger.getPermissionsMap();
 
         // Verify expected state
-        Assert.assertEquals(0, permissionsMap.size());
+        Assertions.assertThat(permissionsMap.size().isEqualTo(0));
     }
 
     @Test
@@ -184,7 +184,7 @@ public class GitLabIntegrationStateChangerTest extends PersistenceCapableTest {
         stateChanger.getPermissionsMap();
 
         // Verify expected state
-        Assert.assertEquals(1, stateChanger.getPermissionsMap().size());
-        Assert.assertTrue(stateChanger.getPermissionsMap().containsKey("testPermission"));
+        Assertions.assertThat(stateChanger.getPermissionsMap().size().isEqualTo(1));
+        Assertions.assertThat(stateChanger.getPermissionsMap().containsKey("testPermission").isTrue());
     }
 }

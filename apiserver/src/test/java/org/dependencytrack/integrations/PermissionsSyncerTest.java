@@ -18,8 +18,8 @@
  */
 package org.dependencytrack.integrations;
 
-import org.junit.Assert;
-import org.junit.Test;
+import org.assertj.core.api.Assertions;
+import org.junit.jupiter.api.Test;
 
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -33,14 +33,14 @@ public class PermissionsSyncerTest {
     public final void testIsEnabled_True() {
         PermissionsSyncer permissionsSyncer = mock(PermissionsSyncer.class);
         when(permissionsSyncer.isEnabled()).thenReturn(true);
-        Assert.assertTrue(permissionsSyncer.isEnabled());
+        Assertions.assertThat(permissionsSyncer.isEnabled().isTrue());
     }
 
     @Test
     public final void testIsEnabled_False() {
         PermissionsSyncer permissionsSyncer = mock(PermissionsSyncer.class);
         when(permissionsSyncer.isEnabled()).thenReturn(false);
-        Assert.assertFalse(permissionsSyncer.isEnabled());
+        Assertions.assertThat(permissionsSyncer.isEnabled().isFalse());
     }
 
     @Test
