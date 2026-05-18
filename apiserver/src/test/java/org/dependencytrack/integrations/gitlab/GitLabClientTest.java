@@ -54,112 +54,109 @@ import static org.apache.commons.io.IOUtils.resourceToString;
 
 public class GitLabClientTest {
 
-    @RegisterExtension
-    static final WireMockExtension wireMock = WireMockExtension.newInstance()
-            .options(wireMockConfig().dynamicPort())
-            .build();
+        @RegisterExtension
+        static final WireMockExtension wireMock = WireMockExtension.newInstance()
+                        .options(wireMockConfig().dynamicPort())
+                        .build();
 
-    @Test
-    public void testConstructorWithAccessToken() {
-        String accessToken = "my-access-token";
-        GitLabClient client = new GitLabClient(accessToken);
-        Assertions.assertThat(client).isNotNull();
-    }
+        @Test
+        public void testConstructorWithAccessToken() {
+                String accessToken = "my-access-token";
+                GitLabClient client = new GitLabClient(accessToken);
+                Assertions.assertThat(client).isNotNull();
+        }
 
-    @Test
-    public void testConstructorWithAccessTokenAndConfig() {
-        String accessToken = "my-access-token";
-        Config config = ConfigProvider.getConfig();
-        GitLabClient client = new GitLabClient(accessToken, config, null, false);
-        Assertions.assertThat(client).isNotNull();
-        Assertions.assertThat("Dependency-Track").isEqualTo(client.getConfig().getConfigValue(ConfigKeys.APPLICATION_NAME));
-    }
+        @Test
+        public void testConstructorWithAccessTokenAndConfig() {
+                String accessToken = "my-access-token";
+                Config config = ConfigProvider.getConfig();
+                GitLabClient client = new GitLabClient(accessToken, config, null, false);
+                Assertions.assertThat(client).isNotNull();
+                Assertions.assertThat("Dependency-Track")
+                                .isEqualTo(client.getConfig().getConfigValue(ConfigKeys.APPLICATION_NAME));
+        }
 
-    @Test
-    public void testGetGitLabProjects() throws URISyntaxException, IOException {
-        String accessToken = "TEST_ACCESS_TOKEN";
+        @Test
+        public void testGetGitLabProjects() throws URISyntaxException, IOException {
+                String accessToken = "TEST_ACCESS_TOKEN";
 
-        String page1Result = resourceToString("/unit/gitlab-api-getgitlabprojects-response-page-1.json",
-                StandardCharsets.UTF_8);
-        String page2Result = resourceToString("/unit/gitlab-api-getgitlabprojects-response-page-2.json",
-                StandardCharsets.UTF_8);
+                String page1Result = resourceToString("/unit/gitlab-api-getgitlabprojects-response-page-1.json",
+                                StandardCharsets.UTF_8);
+                String page2Result = resourceToString("/unit/gitlab-api-getgitlabprojects-response-page-2.json",
+                                StandardCharsets.UTF_8);
 
-        stubFor(post(urlPathEqualTo("/api/graphql"))
-                .inScenario("test-get-gitlab-projects")
-                .whenScenarioStateIs(Scenario.STARTED)
-                .willReturn(ok().withHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON)
-                        .withBody(page1Result))
-                .willSetStateTo("second-page"));
+                stubFor(post(urlPathEqualTo("/api/graphql"))
+                                .inScenario("test-get-gitlab-projects")
+                                .whenScenarioStateIs(Scenario.STARTED)
+                                .willReturn(ok().withHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON)
+                                                .withBody(page1Result))
+                                .willSetStateTo("second-page"));
 
-        stubFor(post(urlPathEqualTo("/api/graphql"))
-                .inScenario("test-get-gitlab-projects")
-                .whenScenarioStateIs("second-page")
-                .willReturn(ok().withHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON)
-                        .withBody(page2Result))
-                .willSetStateTo("Finished"));
+                stubFor(post(urlPathEqualTo("/api/graphql"))
+                                .inScenario("test-get-gitlab-projects")
+                                .whenScenarioStateIs("second-page")
+                                .willReturn(ok().withHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON)
+                                                .withBody(page2Result))
+                                .willSetStateTo("Finished"));
 
-        final var configMock = mock(Config.class);
+                Config config = ConfigProvider.getConfig();
+                GitLabClient gitLabClient = new GitLabClient(accessToken, config, null, false);
 
-        when(configMock.getConfigValue(eq(ConfigKeys.OIDC_ISSUER))).thenReturn(wireMock.baseUrl());
+                List<GitLabProject> gitLabProjects = gitLabClient.getGitLabProjects();
 
-        GitLabClient gitLabClient = new GitLabClient(accessToken, configMock, null, false);
+                Assertions.assertThat(gitLabProjects).isNotNull();
+                Assertions.assertThat(gitLabProjects.size()).isEqualTo(4);
 
-        List<GitLabProject> gitLabProjects = gitLabClient.getGitLabProjects();
+                List<String> actualProjectPaths = new ArrayList<>();
+                for (var project : gitLabProjects)
+                        actualProjectPaths.add(project.getFullPath());
 
-        Assertions.assertThat(gitLabProjects).isNotNull();
-        Assertions.assertThat(gitLabProjects.size().isEqualTo(4));
+                List<String> expectedProjectPaths = Arrays.asList(
+                                "test-group/test-subgroup/test-project-1",
+                                "test-group/test-subgroup/test-project-2",
+                                "test-group/test-subgroup-2/test-project-3",
+                                "test-group/test-subgroup-2/test-project-4");
 
-        List<String> actualProjectPaths = new ArrayList<>();
-        for (var project : gitLabProjects)
-            actualProjectPaths.add(project.getFullPath());
+                Assertions.assertThat(actualProjectPaths).isEqualTo(expectedProjectPaths);
+        }
 
-        List<String> expectedProjectPaths = Arrays.asList(
-                "test-group/test-subgroup/test-project-1",
-                "test-group/test-subgroup/test-project-2",
-                "test-group/test-subgroup-2/test-project-3",
-                "test-group/test-subgroup-2/test-project-4");
+        @Test
+        public void testGetGitLabProjectsWithTopics() throws IOException, URISyntaxException {
+                String accessToken = "TEST_ACCESS_TOKEN";
 
-        Assertions.assertThat(actualProjectPaths).isEqualTo(expectedProjectPaths);
-    }
+                String result = resourceToString("/unit/gitlab-api-getgitlabprojects-topics-response.json",
+                                StandardCharsets.UTF_8);
 
-    @Test
-    public void testGetGitLabProjectsWithTopics() throws IOException, URISyntaxException {
-        String accessToken = "TEST_ACCESS_TOKEN";
+                stubFor(post(urlPathEqualTo("/api/graphql"))
+                                .willReturn(ok().withHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON)
+                                                .withBody(result)));
 
-        String result = resourceToString("/unit/gitlab-api-getgitlabprojects-topics-response.json",
-                StandardCharsets.UTF_8);
+                Config config = ConfigProvider.getConfig();
 
-        stubFor(post(urlPathEqualTo("/api/graphql"))
-                .willReturn(ok().withHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON)
-                        .withBody(result)));
+                List<String> topics = Arrays.asList("topic1");
 
-        final var configMock = mock(Config.class);
+                GitLabClient gitLabClient = new GitLabClient(accessToken, config, topics, false);
 
-        when(configMock.getConfigValue(eq(ConfigKeys.OIDC_ISSUER))).thenReturn(wireMock.baseUrl());
-        List<String> topics = Arrays.asList("topic1");
+                List<GitLabProject> gitLabProjects = gitLabClient.getGitLabProjects();
 
-        GitLabClient gitLabClient = new GitLabClient(accessToken, configMock, topics, false);
+                Assertions.assertThat(gitLabProjects).isNotNull();
+                Assertions.assertThat(gitLabProjects.size()).isEqualTo(1);
 
-        List<GitLabProject> gitLabProjects = gitLabClient.getGitLabProjects();
+                Assertions.assertThat("project/with/topic").isEqualTo(gitLabProjects.get(0).getFullPath());
+        }
 
-        Assertions.assertThat(gitLabProjects).isNotNull();
-        Assertions.assertThat(gitLabProjects.size().isEqualTo(1));
-
-        Assertions.assertThat("project/with/topic").isEqualTo(gitLabProjects.get(0).getFullPath());
-    }
-
-    @Test
-    public void testJsonToList() {
-        String accessToken = "my-access-token";
-        GitLabClient client = new GitLabClient(accessToken);
-        JSONArray jsonArray = new JSONArray();
-        jsonArray.add("item1");
-        jsonArray.add("item2");
-        List<String> list = client.jsonToList(jsonArray);
-        Assertions.assertThat(list).isNotNull();
-        Assertions.assertThat(list.size()).isEqualTo(2); // assume 2 items are returned
-        Assertions.assertThat("item1").isEqualTo(list.get(0));
-        Assertions.assertThat("item2").isEqualTo(list.get(1));
-    }
+        @Test
+        public void testJsonToList() {
+                String accessToken = "my-access-token";
+                GitLabClient client = new GitLabClient(accessToken);
+                JSONArray jsonArray = new JSONArray();
+                jsonArray.add("item1");
+                jsonArray.add("item2");
+                List<String> list = client.jsonToList(jsonArray);
+                Assertions.assertThat(list).isNotNull();
+                Assertions.assertThat(list.size()).isEqualTo(2); // assume 2 items are returned
+                Assertions.assertThat("item1").isEqualTo(list.get(0));
+                Assertions.assertThat("item2").isEqualTo(list.get(1));
+        }
 
 }

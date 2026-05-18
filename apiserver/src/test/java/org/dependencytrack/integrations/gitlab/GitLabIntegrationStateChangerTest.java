@@ -24,6 +24,7 @@ import alpine.model.Team;
 
 import org.dependencytrack.PersistenceCapableTest;
 import org.dependencytrack.auth.Permissions;
+import org.dependencytrack.secret.TestSecretManager;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.assertj.core.api.Assertions;
@@ -46,7 +47,8 @@ public class GitLabIntegrationStateChangerTest extends PersistenceCapableTest {
 
     @BeforeAll
     public void setUp() {
-        stateChanger = new GitLabIntegrationStateChanger(); //TODO HERE
+        final var secretManager = new TestSecretManager();
+        stateChanger = new GitLabIntegrationStateChanger(secretManager);
     }
 
     /**
@@ -55,7 +57,8 @@ public class GitLabIntegrationStateChangerTest extends PersistenceCapableTest {
     @Test
     public void testIntegrationStateChangerMetadata() {
         Assertions.assertThat("GitLab Integration State Changer").isEqualTo(stateChanger.name());
-        Assertions.assertThat("Executes GitLab integration enable and disable tasks").isEqualTo(stateChanger.description());
+        Assertions.assertThat("Executes GitLab integration enable and disable tasks")
+                .isEqualTo(stateChanger.description());
     }
 
     /**
