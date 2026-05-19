@@ -80,6 +80,11 @@ public final class TestSecretManager implements SecretManager {
     }
 
     @Override
+    public @Nullable String getEncryptedValue(String name) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
     public @Nullable SecretMetadata getSecretMetadata(String name) {
         throw new UnsupportedOperationException();
     }
