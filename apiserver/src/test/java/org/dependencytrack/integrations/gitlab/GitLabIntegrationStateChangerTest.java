@@ -26,6 +26,8 @@ import org.dependencytrack.PersistenceCapableTest;
 import org.dependencytrack.auth.Permissions;
 import org.dependencytrack.secret.TestSecretManager;
 
+import org.junit.jupiter.api.TestInstance;
+import org.junit.jupiter.api.TestInstance.Lifecycle;
 import org.junit.jupiter.api.BeforeAll;
 import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -41,6 +43,7 @@ import static org.dependencytrack.model.ConfigPropertyConstants.GITLAB_SBOM_PUSH
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+@TestInstance(Lifecycle.PER_CLASS)
 public class GitLabIntegrationStateChangerTest extends PersistenceCapableTest {
 
     private GitLabIntegrationStateChanger stateChanger;
