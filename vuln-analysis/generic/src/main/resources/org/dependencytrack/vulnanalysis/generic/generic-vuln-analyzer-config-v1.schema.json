@@ -11,6 +11,20 @@
       "title": "Enabled",
       "description": "Whether the generic vulnerability analyzer should be enabled.",
       "existingJavaType": "boolean"
+    },
+    "apiUrl": {
+      "type": "string",
+      "title": "API URL",
+      "description": "URL of the generic server.",
+      "format": "uri",
+      "minLength": 1
+    },
+    "apiToken": {
+      "type": "string",
+      "title": "API Token",
+      "description": "Token for authenticating with the generic server.",
+      "minLength": 1,
+      "x-secret-ref": true
     }
   },
   "required": [
