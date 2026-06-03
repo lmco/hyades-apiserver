@@ -1,4 +1,4 @@
-package org.dependencytrack.vulnanalysis.generic;
+package org.dependencytrack.vulnanalysis.efoss;
 
 import java.net.http.HttpClient;
 
@@ -9,25 +9,25 @@ import org.dependencytrack.vulnanalysis.api.VulnAnalyzer;
 import org.dependencytrack.vulnanalysis.api.VulnAnalyzerFactory;
 import org.dependencytrack.vulnanalysis.api.VulnAnalyzerRequirement;
 
-public class GenericVulnAnalyzerFactory implements VulnAnalyzerFactory, RuntimeConfigurable {
+public class EfossVulnAnalyzerFactory implements VulnAnalyzerFactory, RuntimeConfigurable {
     
     private @Nullable ConfigRegistry configRegistry;
     private @Nullable HttpClient httpClient;
 
     @Override
     public String extensionName() {
-        return "generic";
+        return "efoss";
     }
 
      @Override
     public Class<? extends VulnAnalyzer> extensionClass() {
-        return GenericVulnAnalyzer.class;
+        return EfossVulnAnalyzer.class;
     }
 
     @Override
     public boolean isEnabled() {
         requireNonNull(configRegistry);
-        return configRegistry.getRuntimeConfig(GenericVulnAnalyzerConfigV1.class).isEnabled();
+        return configRegistry.getRuntimeConfig(EfossVulnAnalyzerConfigV1.class).isEnabled();
     }
 
     @Override
@@ -46,12 +46,12 @@ public class GenericVulnAnalyzerFactory implements VulnAnalyzerFactory, RuntimeC
         requireNonNull(configRegistry);
         requireNonNull(httpClient);
 
-        final var config = configRegistry.getRuntimeConfig(GenericVulnAnalyzerConfigV1.class);
+        final var config = configRegistry.getRuntimeConfig(EfossVulnAnalyzerConfigV1.class);
         if (!config.isEnabled()) {
             throw new IllegalStateException("Analyzer is disabled");
         }
 
-        return new GenericVulnAnalyzer(
+        return new EfossVulnAnalyzer(
             httpClient,
             config.getApiUrl().toString(),
             config.getApiToken()
@@ -61,7 +61,7 @@ public class GenericVulnAnalyzerFactory implements VulnAnalyzerFactory, RuntimeC
     @Override
     public RuntimeConfigSpec runtimeConfigSpec() {
         return RuntimeConfigSpec.of(
-        new GenericVulnAnalyzerConfigV1()
+        new EfossVulnAnalyzerConfigV1()
                 .withEnabled(false),
         config -> {
             if (!config.isEnabled()) {

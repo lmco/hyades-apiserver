@@ -556,6 +556,12 @@
                 <artifactId>zstd-jni</artifactId>
                 <version>${lib.zstd-jni.version}</version>
             </dependency>
+
+            <dependency>
+                <groupId>com.graphql-java</groupId>
+                <artifactId>graphql-java</artifactId>
+                <version>25.0</version>
+            </dependency>
         </dependencies>
     </dependencyManagement>
 

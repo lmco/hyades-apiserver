@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://dependencytrack.org/schemas/generic-vuln-analyzer-config-v1.schema.json",
+  "$id": "https://dependencytrack.org/schemas/efoss-vuln-analyzer-config-v1.schema.json",
   "type": "object",
   "javaInterfaces": [
     "org.dependencytrack.plugin.api.config.RuntimeConfig"
@@ -9,20 +9,20 @@
     "enabled": {
       "type": "boolean",
       "title": "Enabled",
-      "description": "Whether the generic vulnerability analyzer should be enabled.",
+      "description": "Whether the eFOSS vulnerability analyzer should be enabled.",
       "existingJavaType": "boolean"
     },
     "apiUrl": {
       "type": "string",
       "title": "API URL",
-      "description": "URL of the generic server.",
+      "description": "URL of the eFOSS server.",
       "format": "uri",
       "minLength": 1
     },
     "apiToken": {
       "type": "string",
       "title": "API Token",
-      "description": "Token for authenticating with the generic server.",
+      "description": "Token for authenticating with the eFOSS server.",
       "minLength": 1,
       "x-secret-ref": true
     }
