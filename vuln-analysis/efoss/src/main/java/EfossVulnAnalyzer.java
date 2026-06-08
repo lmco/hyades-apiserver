@@ -2,8 +2,10 @@ package org.dependencytrack.vulnanalysis.efoss;
 
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 
 import org.cyclonedx.proto.v1_7.Bom;
+import org.cyclonedx.proto.v1_7.Component;
 import org.dependencytrack.vulnanalysis.api.VulnAnalyzer;
 import org.slf4j.LoggerFactory;
 
@@ -26,6 +28,7 @@ final class EfossVulnAnalyzer implements VulnAnalyzer {
     private final HttpClient httpClient;
     private final String apiBaseUrl;
     private final String apiToken;
+    private final ArrayList<EfossRequestObject> requestObjects;
 
     EfossVulnAnalyzer(
             HttpClient httpClient,
@@ -39,22 +42,23 @@ final class EfossVulnAnalyzer implements VulnAnalyzer {
     @Override
     public Bom analyze(Bom bom) throws InterruptedException {
 
-        // String schema = "type Query{hello: String}";
+        for (final Component component : bom.getComponentsList()) {
+            EfossRequestObject temp = new EfossRequestObject(component);
+            requestObjects.add(temp);
+        }
 
-        // SchemaParser schemaParser = new SchemaParser();
-        // TypeDefinitionRegistry typeDefinitionRegistry = schemaParser.parse(schema);
 
-        // RuntimeWiring runtimeWiring = newRuntimeWiring()
-        //         .type("Query", builder -> builder.dataFetcher("hello", new StaticDataFetcher("world")))
-        //         .build();
-
-        // SchemaGenerator schemaGenerator = new SchemaGenerator();
-        // GraphQLSchema graphQLSchema = schemaGenerator.makeExecutableSchema(typeDefinitionRegistry, runtimeWiring);
-
-        // GraphQL build = GraphQL.newGraphQL(graphQLSchema).build();
-        // ExecutionResult executionResult = build.execute("{hello}");
-
-        // System.out.println(executionResult.getData().toString());
+        StringBuilder builder = new StringBuilder("{fossComponentRecords(ids: [")
+        for(Iterator<EfossRequestObject> itr = requestObjects.iterator(); itr.hasNext()) {
+            EfossRequestObject current = itr.next();
+            builder.append("\"");
+            builder.append(current.getId());
+            if(itr.hasNext())
+                builder.append("\", ");
+            else
+                builder.append("\"]) {id group licenseIds licenses {licenseId licenseName} purl}}");
+        }
+        String schema = builder.toString();
 
         final var request = HttpRequest.newBuilder()
                 .uri(java.net.URI.create(apiBaseUrl))
@@ -64,6 +68,20 @@ final class EfossVulnAnalyzer implements VulnAnalyzer {
                 .timeout(Duration.ofSeconds(30))
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                 .build();
+
+        final HttpResponse<byte[]> response;
+        try {
+            response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
+        } catch (IOException e) {
+            throw new UncheckedIOException("eFOSS API request to %s failed".formatted(url), e);
+        }
+
+        if (response.statusCode() >= 200 && response.statusCode() < 300) {
+            // TODO: Do some stuff
+        }
+
+        throw new IllegalStateException(
+                "eFOSS API request to %s failed with status %d".formatted(url, response.statusCode()));
     }
     
 }
