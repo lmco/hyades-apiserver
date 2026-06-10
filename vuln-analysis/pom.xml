@@ -37,6 +37,7 @@
         <module>snyk</module>
         <module>trivy</module>
         <module>vuln-db</module>
+        <module>efoss</module>
     </modules>
 
     <properties>

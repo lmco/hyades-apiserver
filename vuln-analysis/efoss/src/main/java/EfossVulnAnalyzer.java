@@ -1,12 +1,18 @@
 package org.dependencytrack.vulnanalysis.efoss;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Iterator;
 
 import org.cyclonedx.proto.v1_7.Bom;
 import org.cyclonedx.proto.v1_7.Component;
 import org.dependencytrack.vulnanalysis.api.VulnAnalyzer;
+import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import graphql.ExecutionResult;
@@ -48,8 +54,8 @@ final class EfossVulnAnalyzer implements VulnAnalyzer {
         }
 
 
-        StringBuilder builder = new StringBuilder("{fossComponentRecords(ids: [")
-        for(Iterator<EfossRequestObject> itr = requestObjects.iterator(); itr.hasNext()) {
+        StringBuilder builder = new StringBuilder("{fossComponentRecords(ids: [");
+        for(Iterator<EfossRequestObject> itr = requestObjects.iterator(); itr.hasNext();) {
             EfossRequestObject current = itr.next();
             builder.append("\"");
             builder.append(current.getId());
@@ -66,14 +72,14 @@ final class EfossVulnAnalyzer implements VulnAnalyzer {
                 .header("Accept-Encoding", "gzip, deflate, br")
                 .header("Content-Type", "application/json")
                 .timeout(Duration.ofSeconds(30))
-                .POST(HttpRequest.BodyPublishers.ofByteArray(body))
+                .POST(HttpRequest.BodyPublishers.ofByteArray(schema.getBytes()))
                 .build();
 
         final HttpResponse<byte[]> response;
         try {
             response = httpClient.send(request, HttpResponse.BodyHandlers.ofByteArray());
         } catch (IOException e) {
-            throw new UncheckedIOException("eFOSS API request to %s failed".formatted(url), e);
+            throw new UncheckedIOException("eFOSS API request to %s failed".formatted(apiBaseUrl), e);
         }
 
         if (response.statusCode() >= 200 && response.statusCode() < 300) {
@@ -81,7 +87,7 @@ final class EfossVulnAnalyzer implements VulnAnalyzer {
         }
 
         throw new IllegalStateException(
-                "eFOSS API request to %s failed with status %d".formatted(url, response.statusCode()));
+                "eFOSS API request to %s failed with status %d".formatted(apiBaseUrl, response.statusCode()));
     }
     
 }

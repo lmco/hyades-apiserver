@@ -1,13 +1,19 @@
 package org.dependencytrack.vulnanalysis.efoss;
 
 import java.net.http.HttpClient;
+import java.util.EnumSet;
 
 import org.dependencytrack.plugin.api.RuntimeConfigurable;
 import org.dependencytrack.plugin.api.ServiceRegistry;
 import org.dependencytrack.plugin.api.config.ConfigRegistry;
+import org.dependencytrack.plugin.api.config.InvalidRuntimeConfigException;
+import org.dependencytrack.plugin.api.config.RuntimeConfigSpec;
 import org.dependencytrack.vulnanalysis.api.VulnAnalyzer;
 import org.dependencytrack.vulnanalysis.api.VulnAnalyzerFactory;
 import org.dependencytrack.vulnanalysis.api.VulnAnalyzerRequirement;
+import org.jspecify.annotations.Nullable;
+
+import static java.util.Objects.requireNonNull;
 
 public class EfossVulnAnalyzerFactory implements VulnAnalyzerFactory, RuntimeConfigurable {
     
@@ -32,7 +38,7 @@ public class EfossVulnAnalyzerFactory implements VulnAnalyzerFactory, RuntimeCon
 
     @Override
     public EnumSet<VulnAnalyzerRequirement> analyzerRequirements() {
-        return EnumSet.of();
+        return EnumSet.noneOf(VulnAnalyzerRequirement.class);
     }
 
     @Override

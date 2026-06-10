@@ -2,6 +2,7 @@ package org.dependencytrack.vulnanalysis.efoss;
 
 import com.github.packageurl.PackageURL;
 
+import org.cyclonedx.model.LicenseChoice;
 import org.cyclonedx.proto.v1_7.Component;
 
 
@@ -10,12 +11,13 @@ public class EfossRequestObject {
     private PackageURL purl;
     private String type;
     private String group;
-    private LicenseChoice licenseChoice;
+    private LicenseChoice licenseChoice = new LicenseChoice();
 
     EfossRequestObject(Component component) {
-        this.purl = = new PackageURL(component.getPurl());
+        this.purl = new PackageURL(component.getPurl());
         this.group = component.getGroup();
-        this.licenseChoice.setLicenses(component.getLicenseChoice().getLicenses());
+
+        this.licenseChoice.setLicenses(component.getLicenses().getLicenses());
     }
 
     public String getId(){

@@ -7,7 +7,7 @@ import org.dependencytrack.plugin.api.Plugin;
 import java.util.Collection;
 import java.util.List;
 
-public final class GebericVulnAnalyzerPlugin implements Plugin {
+public final class EfossVulnAnalyzerPlugin implements Plugin {
 
     @Override
     public Collection<? extends ExtensionFactory<? extends ExtensionPoint>> extensionFactories() {
